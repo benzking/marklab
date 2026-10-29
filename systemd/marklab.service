@@ -1,0 +1,12 @@
+[Unit]
+Description=模型库（静态 + 抓取 API :8851）
+After=network-online.target
+
+[Service]
+WorkingDirectory=/home/gly/marklab
+ExecStart=/usr/bin/env node server.mjs
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target

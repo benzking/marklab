@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>我的模型库</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="bar">
+  <div class="brand">
+    <strong>我的模型库</strong>
+    <span>创想云 · MakerWorld · Snapmaker · MakerOnline 一个地方收</span>
+  </div>
+  <form class="add" id="add-form">
+    <input id="add-url" type="url" placeholder="粘贴模型页网址，回车收进来" autocomplete="off" spellcheck="false">
+    <button type="submit" id="add-btn">添加</button>
+  </form>
+</header>
+
+<div class="status" id="status" hidden><span class="spin"></span><span id="status-text">抓取中…</span></div>
+
+<main id="list-view">
+  <div class="tools">
+    <input id="q" type="search" placeholder="搜标题 / 作者 / 标签">
+    <div class="chips" id="site-chips"></div>
+    <div class="chips" id="tag-chips"></div>
+    <select id="format">
+      <option value="">全部格式</option>
+      <option value="3mf">3MF</option>
+      <option value="stl">STL</option>
+    </select>
+    <select id="sort">
+      <option value="new">最新加入</option>
+      <option value="title">按标题</option>
+      <option value="time">按时长</option>
+      <option value="weight">按克重</option>
+    </select>
+    <span class="count" id="count"></span>
+  </div>
+  <section class="grid" id="grid"></section>
+  <div class="empty" id="empty" hidden>
+    <p>库里还没有模型。</p>
+    <p class="hint">把创想云 / MakerWorld / Snapmaker 的模型页网址粘到上面，回车就收进来。</p>
+  </div>
+</main>
+
+<main id="detail-view" hidden></main>
+
+<script src="/app.js"></script>
+</body>
+</html>

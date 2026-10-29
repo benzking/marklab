@@ -1,0 +1,12 @@
+node_modules/
+*.log
+logs/
+.tmp-probe/
+
+# 模型库数据（207 条 3mf/stl 与图片，约 4.8 GB，不入库）
+library/
+
+# 系统与临时
+.DS_Store
+Thumbs.db
+_tmp_*
