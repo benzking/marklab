@@ -342,7 +342,8 @@ test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () =
 // 在临时根里起一个独立的 tasks 进程（模块级状态互不干扰），跑完收尸
 async function runTasks(code, base) {
   const cp = spawn(process.execPath, ['-e', code], {
-    env: { ...process.env, MARKLAB_ROOT: base },
+    // NOSPAWN：队列语义的测试不真的起 grab（不联网、不开浏览器）
+    env: { ...process.env, MARKLAB_ROOT: base, MARKLAB_TEST_NOSPAWN: '1' },
   });
   let out = '';
   let err = '';
@@ -383,6 +384,7 @@ test('restore 只恢复本进程排队名单，jsonl 里别的进程排队的不
     import path from 'node:path';
     import { fileURLToPath } from 'node:url';
     const url = 'https://space.snapmaker.cn/zh/model/1021-model';
+    tasks.pause(); // 让它停在队里，别在 restore 前就跑完
     const a = tasks.enqueue({ url, source: 'bulk' }); // 本进程排一条 → queue.json 记它的 id
     // 另一条 jsonl 行代表「别的进程排的」，只存在于 jsonl、不在 queue.json
     await mkdir(path.join(process.env.MARKLAB_ROOT, 'data', 'tasks'), { recursive: true });
@@ -424,5 +426,152 @@ test('闸门持久化：finish 后 nextOkAt 写进 queue.json，restore 读回',
   const { out } = await runTasks(code, base);
   const j = JSON.parse(out.trim().split('\n').pop());
   assert.equal(j.hasNext, true, 'nextOkAt 应持久化到 queue.json');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('暂停中手动入队只放行这一条，paused 不动，队列里其余一条不跑', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-force-'));
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import { readFile } from 'node:fs/promises';
+    import path from 'node:path';
+    const u = (n) => 'https://space.snapmaker.cn/zh/model/' + n + '-x';
+    tasks.pause();
+    tasks.enqueue({ url: u(1), source: 'bulk' });
+    tasks.enqueue({ url: u(2), source: 'bulk' });
+    const m = tasks.enqueue({ url: u(3), source: 'manual' }); // 暂停中手动点
+    await new Promise((r) => setTimeout(r, 300));
+    const st = JSON.parse(await readFile(path.join(process.env.MARKLAB_ROOT, 'data', 'queue.json'), 'utf8'));
+    console.log(JSON.stringify({
+      paused: tasks.state().paused,
+      savedPaused: st.paused,
+      phase3: tasks.get(m.task.id).phase,
+      queued: tasks.queueDepth(),
+      noUrlInState: !JSON.stringify(st).includes('http'),
+    }));
+    process.exit(0);
+  `;
+  const { out, err } = await runTasks(code, base);
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.paused, true, '暂停不该被手动入队解除');
+  assert.equal(j.savedPaused, true, '暂停位要落盘');
+  assert.equal(j.phase3, 'done', '手动点的那一条要真的跑起来');
+  assert.equal(j.queued, 2, '其余两条仍在排队，一条都没跑');
+  assert.equal(j.noUrlInState, true, 'queue.json 只存 id，不存任务本体');
+  assert.equal(err, '', '不应有报错');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('每站一条队轮转：一个站积压不挡别的站出队', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-lane-'));
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    const A = (n) => 'https://www.crealitycloud.cn/model-detail/' + String(n).padStart(24, '0');
+    const B = (n) => 'https://space.snapmaker.cn/zh/model/' + n + '-x';
+    // 暂停着排完四条再放行：模拟一批积压，轮转顺序才是确定的
+    tasks.pause();
+    for (const n of [1, 2, 3]) tasks.enqueue({ url: A(n), source: 'bulk' });
+    tasks.enqueue({ url: B(9), source: 'bulk' });
+    tasks.resume();
+    for (let i = 0; i < 100 && tasks.queueDepth(); i++) await new Promise((r) => setTimeout(r, 30));
+    const order = tasks.list().filter((t) => t.phase === 'done')
+      .sort((a, b) => Date.parse(a.endedAt) - Date.parse(b.endedAt))
+      .map((t) => t.site);
+    console.log(JSON.stringify({ order, left: tasks.queueDepth() }));
+    process.exit(0);
+  `;
+  const { out, err } = await runTasks(code, base);
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.left, 0, '队列应跑空');
+  assert.deepEqual(j.order, ['creality', 'snapmaker', 'creality', 'creality'], '两个站要轮转，不按入队顺序一路走完');
+  assert.equal(err, '', '不应有报错');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('失败过的网址能重抓，成功过的 24 小时内不重排', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-retry-'));
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import { mkdir, appendFile } from 'node:fs/promises';
+    import path from 'node:path';
+    const url = 'https://space.snapmaker.cn/zh/model/1021-model';
+    const failedUrl = 'https://space.snapmaker.cn/zh/model/1022-model';
+    // 一条 24 小时内失败过的（上一轮抓到一半崩了）
+    await mkdir(path.join(process.env.MARKLAB_ROOT, 'data', 'tasks'), { recursive: true });
+    const month = path.join(process.env.MARKLAB_ROOT, 'data', 'tasks', new Date().toISOString().slice(0, 7) + '.jsonl');
+    const old = { id: 't-old', url: failedUrl, site: 'snapmaker', phase: 'failed', rounds: 3, createdAt: new Date().toISOString(), endedAt: new Date().toISOString(), ok: false, progress: { done: 0, total: 0, name: '' } };
+    await appendFile(month, JSON.stringify(old) + '\\n');
+    const again = await import('/home/gly/marklab/tasks.mjs?r=' + Date.now());
+    await again.restore();
+    const a = again.enqueue({ url, source: 'bulk' });
+    for (let i = 0; i < 60 && again.queueDepth(); i++) await new Promise((r) => setTimeout(r, 30));
+    const b = again.enqueue({ url, source: 'bulk' });   // 成功过 → 拦
+    const c = again.enqueue({ url: failedUrl, source: 'manual' }); // 失败过 → 放行
+    console.log(JSON.stringify({
+      sameAfterDone: b.task.id === a.task.id,
+      failedAllowed: c.task.id !== 't-old',
+      rounds: c.task.rounds,
+    }));
+    process.exit(0);
+  `;
+  const { out, err } = await runTasks(code, base);
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.sameAfterDone, true, '24 小时内成功过的不重复入队');
+  assert.equal(j.failedAllowed, true, '失败过的网址要能重新入队');
+  assert.equal(j.rounds, 0, '新一轮从 0 开始计数');
+  assert.equal(err, '', '不应有报错');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('人点停止是 stopped 终态：不计失败、rounds 不动', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-stop-'));
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    const url = 'https://space.snapmaker.cn/zh/model/1021-model';
+    // 暂停着排，它就停在队里，这时点停止
+    tasks.pause();
+    const b = tasks.enqueue({ url: 'https://space.snapmaker.cn/zh/model/1030-x', source: 'bulk' });
+    tasks.stop(b.task.id);
+    const t = tasks.get(b.task.id);
+    console.log(JSON.stringify({ phase: t.phase, rounds: t.rounds, failed: tasks.stats().failed24h }));
+    process.exit(0);
+  `;
+  const { out, err } = await runTasks(code, base);
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.phase, 'stopped', '停止要记 stopped 终态');
+  assert.equal(j.rounds, 0, '停止不改 rounds');
+  assert.equal(j.failed, 0, '停止不计入失败');
+  assert.equal(err, '', '不应有报错');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('子进程挂死：先 SIGTERM 让它收尾，5 秒后 SIGKILL，任务记超时', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-hang-'));
+  // 临时根里放一个「收到 SIGTERM 也不退」的假 grab，专门验杀进程这条路
+  await writeFile(
+    path.join(base, 'grab.mjs'),
+    'process.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n',
+  );
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    const a = tasks.enqueue({ url: 'https://space.snapmaker.cn/zh/model/1021-model', source: 'bulk' });
+    // 只看第一轮：被杀了就说明 SIGTERM→SIGKILL 这条路通了，后面的重排不用等
+    let t = tasks.get(a.task.id);
+    for (let i = 0; i < 100 && !(t.rounds > 0 && t.error); i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      t = tasks.get(a.task.id);
+    }
+    console.log(JSON.stringify({ phase: t.phase, rounds: t.rounds, error: t.error }));
+    process.exit(0);
+  `;
+  const cp = spawn(process.execPath, ['-e', code], {
+    env: { ...process.env, MARKLAB_ROOT: base, MARKLAB_TASK_TIMEOUT_MS: '300' },
+  });
+  let out = '';
+  cp.stdout.on('data', (d) => (out += d));
+  await new Promise((res) => cp.on('close', res));
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.rounds, 1, '挂死的一轮要计一次失败');
+  assert.match(j.error, /超时/, '错误串要是人话（超时），不是堆栈');
   await rm(base, { recursive: true, force: true });
 });

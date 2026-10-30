@@ -20,7 +20,8 @@
 
 **抓取任务 (task)**
 **一个模型的一次入库尝试**。粒度是模型，不是文件。
-状态机：`queued → fetching → parsing → downloading → done | failed | interrupted`。
+状态机：`queued → fetching → parsing → downloading → done | duplicate | failed | stopped | interrupted | incomplete`。
+`duplicate` 算成功；`stopped` 是人点的停止（终态，不计失败）；`incomplete` 是进程正常退出却没走到 `done`（grab 的逻辑问题）。
 
 **失败计数 (failures)**
 同一个模型累计失败次数。到 3 次置 `failed`，不再自动重试。
