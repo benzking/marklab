@@ -132,7 +132,7 @@ export default {
 | 登录探测 | getInfo(cookie) | **page** fetch | `/api/user/me`(Bearer) | `/api/user/personal/info`(裸 token) |
 | 文件清单 | `fileListPage`（匿名） | `f3mf`（page，签名 5 分钟） | CDN 直链 | `print_profiles[].files` |
 | 文件下载 | `memberDownload`（**page+登录**） | 签名 URL（**page**） | CDN http 匿名 | **click** 下载按钮 |
-| 多盘 3mf | 无公开下载 | 有 | 有 | 有 |
+| 多盘 3mf | `3mfDownload`（登录，body 只有 profileId） | 有 | 有 | 有 |
 | 附带文档 | `fileOtherListPage` | `rawFiles` | 无 | `files[]` |
 
 **结论**：`transport` 是这套接口里唯一的真抽象——四站差异 90% 在"怎么取"，不在"取什么"。

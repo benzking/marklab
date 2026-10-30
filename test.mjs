@@ -812,3 +812,10 @@ test('手动加的链接插队：下一个就跑它，其它站不被饿死', as
   assert.equal(order.length, 4);
   assert.ok(order.includes('1695'), '别的站也要跑到，不被创想云饿死');
 });
+
+test('闸门默认是 60–120 秒的区间，不是恒定 60 秒', async () => {
+  const { _testGaps } = await import('./tasks.mjs');
+  const [min, max] = _testGaps();
+  assert.equal(min, 60_000);
+  assert.equal(max, 120_000, 'MAX_GAP 被 readGap 的默认值吃掉了，退化成恒定 60 秒');
+});

@@ -781,7 +781,7 @@ function profilesCard(m) {
           .join('')}</select>`
       : ''}</h2>
     <div class="plist">${rows}</div>
-    <div class="sub" style="margin-top:8px">鼠标悬停看配置详情；3mf 需去站点下载</div>
+    <div class="sub" style="margin-top:8px">鼠标悬停看配置详情；3mf 本体随抓取一起下（登录态）</div>
   </section>`;
 }
 

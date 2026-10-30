@@ -74,7 +74,7 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 | 站点 | 介绍页 / 打印配置 | 文件 |
 | --- | --- | --- |
 | Snapmaker Space | 页面 SSR（**必须带 `-model` 这种 slug**）里有完整打印配置；基础信息走 `api-models.snapmaker.cn/api/model/detail/<id>` | 私链 CDN，HTTP 直下 |
-| 创想云 | 页面 SSR 的 `__NUXT_DATA__`（注意 SSR 的 `modelList` **只有第一页 5 个 STL**，全量要再打 `/api/cxy/v3/model/fileListPage?pageSize=200`，一个模型常拆出几十个件）：`model-info_*` 是详情，**`3mf-list_*` 是打印配置**（3mf 版页面才有：机型、层高/墙/填充、盘数、耗时、耗材重量与逐色耗材 `colorFilament`、兼容机型表），`3mf-all-printers_*` 是机型表 | STL 走 `memberDownload` 换签名 URL（要登录态）；**3mf 打印配置没有公开下载接口**（`3mfDownload` 传 profileId 一律「参数非法」），界面标「去站点下载」并给每个配置带 `?profileId=` 的深链 |
+| 创想云 | 页面 SSR 的 `__NUXT_DATA__`（注意 SSR 的 `modelList` **只有第一页 5 个 STL**，全量要再打 `/api/cxy/v3/model/fileListPage?pageSize=200`，一个模型常拆出几十个件）：`model-info_*` 是详情，**`3mf-list_*` 是打印配置**（3mf 版页面才有：机型、层高/墙/填充、盘数、耗时、耗材重量与逐色耗材 `colorFilament`、兼容机型表），`3mf-all-printers_*` 是机型表 | STL/文档走 `memberDownload` 换签名 URL，打印配置的 3mf 本体走 `3mfDownload`（body 只有 `{id: profileId}`，只认 `__cxy_token_`/`__cxy_uid_` 请求头，匿名一律 `code 4 Invalid Token`；回 OSS 签名直链，24 小时、匿名可下）——两者都要登录态，都不用开浏览器点按钮 |
 | MakerWorld | `/api/v1/design-service/design/<id>`（整站挡非浏览器 UA，必须在页面里 fetch） | `/api/v1/design-service/instance/<id>/f3mf` 换签名 URL（5 分钟有效） |
 | MakerOnline（`.com` 国际站 / `.cn` 国内站，结构一样） | 页面里的 `window.__NUXT__` 是 IIFE 打包的数据，`vm` 里求值后取 `modelDetailData`（打印配置 / 逐盘耗时克重 / 逐色耗材 / 说明 PDF；国内站还带原始文件清单） | `POST /api/file/download`，要 access token；页面里点「下载 → 下载全部」截签名链接（链接的 `response-content-disposition` 里有原始文件名） |
 
@@ -183,7 +183,7 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
   `{"code":1003,"message":"showCaptcha"}`（网易易盾），点了不报错、只弹验证码。
   这类模型记 `noFiles: "captcha"`，控制台「待补抓」单独一行；要下就得在浏览器里打开该模型页过一次验证。
   这是库里 282 个 MakerWorld 模型只有 1 个有文件的主要原因。
-- 创想云只下「模型文件」列表（STL/CAD）；打印配置只抓元数据（3mf 本体没有公开下载接口）；配套文档已抓，下载要登录态。
+- 创想云下「模型文件」列表（STL/CAD）+ 每份打印配置的 3mf 本体（`3mfDownload`，登录态换 24 小时签名直链）；配套文档已抓，下载要登录态。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。
 - MakerWorld 天然带登录态（只能走真浏览器），「匿名优先」对它不适用；其余三站列表/详情一律匿名。

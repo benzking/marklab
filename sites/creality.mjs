@@ -2,7 +2,10 @@
 //
 // 取数方式：SSR 的 `__NUXT_DATA__` 就是 modelGroupDetail 的完整响应；3mf 版页面额外带
 // `3mf-list`（打印配置）。文件清单走 `fileListPage`（匿名可跑），真正的下载链接要
-// `memberDownload` 签名，**必须登录**。3mf 打印配置没有公开下载接口，只能给 `?profileId=` 深链。
+// `memberDownload` 签名，**必须登录**。
+// 打印配置的 3mf 本体走 `3mfDownload`（body 只有 `{id: profileId}`）：只认 `__cxy_token_` /
+// `__cxy_uid_` 请求头，匿名一律 `code 4 Invalid Token`；回的是 OSS 签名直链（24 小时、匿名可下），
+// 不用开浏览器点「下载 3MF」按钮（2026-10-30 实测）。
 //
 // 对外形状见 docs/spec.md §2。
 import * as ch from '../channel.mjs';
@@ -98,6 +101,7 @@ export async function meta(url) {
     downloads: p.downloadCount || 0,
     thumbnail: p.thumbnail || '',
     isAuth: Boolean(p.isAuth),
+    uid: p.userInfo?.userId ?? null,
     filaments: (p.colorFilament || []).map((c) => ({ type: c.type, color: c.color, usedG: Number(c.weight) || null })),
   }));
   // 网址上带的 profileId 优先，其次第一个已认证的（页面上的「作者」徽标就是 isAuth）
@@ -138,6 +142,7 @@ export async function meta(url) {
     docs,
     title: g.groupName,
     author: g.userInfo?.nickName || '',
+    authorUid: g.userId || g.userInfo?.userId || null, // 判「这份 3mf 是不是作者传的」用
     authorAvatar: g.userInfo?.avatar || '',
     description: sanitize(g.groupDesc),
     images: [...new Set([...(g.pcCovers || []), ...(g.covers || [])].map((c) => c.url).filter(Boolean))],
@@ -168,9 +173,9 @@ export async function meta(url) {
     activeProfileId: active?.id || null,
     files: stlFiles,
     fileIds: stlFiles.map((f) => f.id),
-    // 3mf 打印配置没有公开下载接口，界面上标出来让用户去站点下
+    // 兜底：fileLinks 把 3mf 拿到手就把对应条目删掉；没登录 / 拿不到直链时这行还在，界面标「去站点下载」
     siteOnlyFiles: profiles.map((p) => ({
-      name: `${p.title || '打印配置'} · ${p.name}.3mf`,
+      name: profileName(p),
       size: p.size,
       kind: 'profile',
       url: `${canonical}?profileId=${p.id}`,
@@ -178,15 +183,66 @@ export async function meta(url) {
   };
 }
 
-/** 下载链接要签名：memberDownload 必须带登录态，没登录直接抛（不试匿名，省一次必然失败的请求）。 */
+/** 下载链接要签名：memberDownload / 3mfDownload 都要登录态，没登录直接抛（不试匿名，省一次必然失败的请求）。 */
 export async function fileLinks(model) {
-  if (!model.fileIds.length) return [];
+  if (!model.fileIds.length && !(model.profiles || []).length) return [];
   // 先看 cookie 再发请求：没登录时签名接口只回 code 0 + 空列表，等它回错误反而分不清
   // 「没登录」和「解析没拿到链接」（noFiles 会记错原因）。
   const all = await ch.cookies();
   if (!all) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）再抓');
-  const hasToken = all.some((c) => c.name === 'model_token' && HOSTS.some((h) => c.domain === h || c.domain === `.${h}` || c.domain.endsWith(h)));
-  if (!hasToken) throw new Error('下载链接要登录：先在浏览器登录创想云');
+  const mine = all.filter((c) => HOSTS.some((h) => c.domain === h || c.domain === `.${h}` || c.domain.endsWith(h)));
+  const cookieOf = (name) => mine.find((c) => c.name === name)?.value || '';
+  if (!cookieOf('model_token')) throw new Error('下载链接要登录：先在浏览器登录创想云');
+
+  const links = [];
+  if (model.fileIds.length) links.push(...(await authorFileLinks(model)));
+  const { out, missed } = await profileLinks(model, cookieOf('model_token'), cookieOf('model_user_id'));
+  links.push(...out);
+  // 3mf 拿到手就把「去站点下载」的兜底条目摘掉；拿不到的留着，界面还能给深链
+  const left = trimSiteOnly(model.siteOnlyFiles, missed);
+  if (left) model.siteOnlyFiles = left;
+  else delete model.siteOnlyFiles;
+  return links;
+}
+
+/** 打印配置的 3mf 直链：一次一个 profileId，签名直链匿名可下；单个失败不拖累其余。 */
+async function profileLinks(model, token, uid) {
+  const out = [];
+  const missed = [];
+  let authErr = null;
+  for (const p of model.profiles || []) {
+    const r = await fetch(`${SITE}/api/cxy/v3/model/3mfDownload`, {
+      method: 'POST',
+      headers: { ...APP_HEADERS, __cxy_token_: token, __cxy_uid_: uid, referer: model.sourceUrl },
+      body: JSON.stringify({ id: p.id }),
+    }).catch(() => null);
+    const j = await r?.json().catch(() => null);
+    const url = j?.code === 0 ? j.result?.downloadUrl : '';
+    if (!url) {
+      if (j?.code === 4) authErr = j.msg || 'Invalid Token'; // token 过期：整站性的，别一个个配置试完再报「没文件」
+      missed.push(p);
+      continue;
+    }
+    const mine = !model.authorUid || String(p.uid) === String(model.authorUid);
+    out.push({ name: profileName(p), url, size: p.size, kind: 'profile', origin: mine ? 'author' : 'other' });
+  }
+  if (!out.length && authErr) throw new Error(`3mfDownload 拒绝（4 ${authErr}）：先在浏览器重新登录创想云`);
+  return { out, missed };
+}
+
+/** 「0.2mm layer, 2 walls, 15% infill.3mf」——标题已经在目录名里，文件名只留 secondName 区分配置。 */
+function profileName(p) {
+  return `${p.name || p.id}.3mf`;
+}
+
+/** 拿不到直链的配置留在 siteOnlyFiles；全拿到返回 null（grab 会删掉这个字段）。 */
+function trimSiteOnly(siteOnlyFiles, missed) {
+  const left = (siteOnlyFiles || []).filter((f) => missed.some((p) => f.url.endsWith(p.id)));
+  return left.length ? left : null;
+}
+
+/** 作者件（STL/CAD/配套文档）：memberDownload 在页内换签名 URL。 */
+async function authorFileLinks(model) {
   const js = `(async () => {
     const ck = Object.fromEntries(document.cookie.split('; ').map(s => { const i = s.indexOf('='); return [s.slice(0,i), s.slice(i+1)]; }));
     const h = { 'content-type': 'application/json', '__cxy_app_id_': 'cxy-gen2', '__cxy_app_ver_': '7.3.28',
@@ -300,7 +356,7 @@ export async function categories() {
 export default {
   site: 'creality',
   // 这个接口按设计就要登录（签名链接靠登录态算），匿名优先在它身上没意义
-  loginOnly: ['/api/cxy/v3/model/memberDownload'],
+  loginOnly: ['/api/cxy/v3/model/memberDownload', '/api/cxy/v3/model/3mfDownload'],
   platform: 'creality',
   label: '创想云',
   hosts: HOSTS,
@@ -340,6 +396,16 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
   console.assert(c.publishedAt === '2023-11-14T22:13:20.000Z', '秒级时间戳');
   console.assert(c.likes === 3 && c.downloads === 4 && c.collects === 5 && c.comments === 6, '计数');
   console.assert(c.picked === true && c.author === '作者', '作者/精选');
+
+  // 3mf 打印配置：文件名靠 secondName 区分，拿不到直链的留在 siteOnlyFiles
+  const p1 = { id: 'a1', title: '皮卡丘', name: '0.2mm layer', size: 12 };
+  const p2 = { id: 'b2', title: '皮卡丘', name: '0.1mm layer', size: 11 };
+  console.assert(profileName(p1) === '0.2mm layer.3mf', '3mf 文件名');
+  console.assert(profileName({ id: 'c3' }) === 'c3.3mf', '缺字段也不出 undefined');
+  const siteOnly = [p1, p2].map((p) => ({ name: profileName(p), url: `https://x/model-detail/abc?profileId=${p.id}` }));
+  console.assert(trimSiteOnly(siteOnly, [p2]).length === 1 && trimSiteOnly(siteOnly, [p2])[0].url.endsWith('b2'), '只留没拿到的那条');
+  console.assert(trimSiteOnly(siteOnly, []) === null, '全拿到就删字段');
+  console.assert(trimSiteOnly(undefined, [p1]) === null, '没有兜底条目也不炸');
 
   console.log('creality pack demo ok');
 }

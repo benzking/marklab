@@ -18,9 +18,11 @@ const MAX_ROUNDS = 3; // 跨轮次失败上限（ADR-0003）；本任务内的�
 // 模型内部每个文件的间隔在 grab.mjs（5–10 秒），两道闸门合起来才是完整限速。
 // 60 秒是地板：env/CLI 想调小等于关掉限速，直接按 60 走。
 const FLOOR = 60;
-const readGap = (v, def) => Math.max(Number(v) || 0, FLOOR) * 1000;
+const readGap = (v, def) => Math.max(Number(v) || def, FLOOR) * 1000;
 let MIN_GAP = readGap(process.env.MARKLAB_MIN_GAP, 60);
 let MAX_GAP = Math.max(readGap(process.env.MARKLAB_MAX_GAP, 120), MIN_GAP);
+// 测试缝：读当前两道闸门的毫秒值
+export const _testGaps = () => [MIN_GAP, MAX_GAP];
 const KEEP = 500; // 内存里留多少条，更老的只在 jsonl 里
 // 测试缝：不真的起 grab 子进程（队列语义的测试不该联网、不该开浏览器）
 const NO_SPAWN = process.env.MARKLAB_TEST_NOSPAWN === '1';
