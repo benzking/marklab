@@ -339,6 +339,21 @@ test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () =
   await rm(base, { recursive: true, force: true });
 });
 
+// 起一个独立 node 进程跑一段代码（模块级状态互不干扰），返回它的 stdout
+async function runNode(code, extraEnv = {}) {
+  const cp = spawn(process.execPath, ['-e', code], {
+    cwd: '/home/gly/marklab',
+    env: { ...process.env, ...extraEnv },
+  });
+  let out = '';
+  let err = '';
+  cp.stdout.on('data', (d) => (out += d));
+  cp.stderr.on('data', (d) => (err += d));
+  const code_ = await new Promise((res) => cp.on('close', res));
+  if (code_ !== 0) throw new Error(`子进程退出 ${code_}: ${err.slice(0, 300)}`);
+  return out;
+}
+
 // 在临时根里起一个独立的 tasks 进程（模块级状态互不干扰），跑完收尸
 async function runTasks(code, base) {
   const cp = spawn(process.execPath, ['-e', code], {
@@ -574,4 +589,41 @@ test('子进程挂死：先 SIGTERM 让它收尾，5 秒后 SIGKILL，任务记�
   assert.equal(j.rounds, 1, '挂死的一轮要计一次失败');
   assert.match(j.error, /超时/, '错误串要是人话（超时），不是堆栈');
   await rm(base, { recursive: true, force: true });
+});
+
+test('登录态：请求失败不写成未登录，重新检测会跳过缓存', async () => {
+  const { mergeUnknown } = await import('./session.mjs');
+  const prev = [
+    { site: 'a', ok: true, status: 'logged-in', name: '甲' },
+    { site: 'b', ok: false, status: 'logged-out' },
+    { site: 'c', ok: false, status: 'unknown' },
+  ];
+  const fresh = [
+    { site: 'a', ok: false, status: 'unknown', reason: '探测超时' },
+    { site: 'b', ok: false, status: 'unknown', reason: '探测超时' },
+    { site: 'c', ok: false, status: 'unknown', reason: '探测超时' },
+  ];
+  const out = mergeUnknown(prev, fresh);
+  assert.equal(out[0].status, 'logged-in', '已知登录态不该被一次失败盖掉');
+  assert.equal(out[0].stale, true, '要标出这是上次的结果');
+  assert.equal(out[1].status, 'logged-out', '已知未登录同样保留');
+  assert.equal(out[2].status, 'unknown', '本来就是 unknown 就还是 unknown');
+  assert.equal(mergeUnknown(null, fresh)[0].status, 'unknown', '没有旧结果时照实报');
+});
+
+test('登录态：探测卡住时按超时收口，返回 unknown 而不是挂住', async () => {
+  const code = `
+    import * as sites from './sites/index.mjs';
+    sites.registerForTest({ site: '慢站', label: '慢站', hosts: ['slow.example'],
+      loginState: () => new Promise(() => {}), meta() {}, fileLinks() {}, search() {}, userModels() {} });
+    const sess = await import('./session.mjs');
+    const t = Date.now();
+    const r = await sess.probe('慢站');
+    console.log(JSON.stringify({ status: r.status, ms: Date.now() - t, reason: r.reason }));
+  `;
+  const out = await runNode(code, { MARKLAB_PROBE_TIMEOUT_MS: '200' });
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.status, 'unknown', '卡住要归 unknown');
+  assert.ok(r.ms < 5000, '要按超时收口，不是一直等');
+  assert.match(r.reason, /超时/, '原因要说清是超时');
 });
