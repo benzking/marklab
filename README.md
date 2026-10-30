@@ -122,7 +122,9 @@ setsid nohup node bulk.mjs --loop 6h --limit 50 > logs/bulk.log 2>&1 < /dev/null
 - **订阅任务**：左边清单、右边详情两栏。详情里有门槛、上次结果、命中记录，可直接
   立即跑一轮 / 编辑 / 删除；新建和编辑用同一个表单。
 - **运行日志**：抓取队列、订阅命中、智能标签、判重四类事件**合成一条时间轴**，顶部标签筛选。
-- **站点包**：四个站的链接规则、元数据来源、文件接口、搜索方式、分类能力，加上登录态。
+- **站点包**：每个站的链接规则、元数据来源、文件接口、搜索方式、分类能力，加上登录态。
+  现在有五个包（创想云 / MakerWorld / Snapmaker / MakerOnline 国内站 / MakerOnline 海外站）——
+  MakerOnline 的两个域名是两套独立系统，各自成包，互不 import。
 - **设置**：大模型打标签的 baseUrl / apiKey / model，以及待确认的新词。
 
 - **登录态同步**：不用同步。`session.mjs` 通过 `channel.mjs` 从你本机 Chromium 进程内现取
@@ -170,7 +172,7 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 ## 已知边界
 
 - MakerOnline 的国内站与国际站是**两套登录态**：`.cn` 登录了不代表 `.com` 登录了，工具会按各自域名打开页面。
-- 创想云 / MakerWorld / MakerOnline 的**文件**都需要浏览器扩展连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。
+- 创想云 / MakerWorld / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。
 - **MakerWorld 没有「按机型」的单独 3mf**：`?machine=N2S / O1C2` 返回的还是同一个文件（同名同大小同 URL），
   机型只是一张兼容列表。A1 / H2C 在详情页当页签展示，不再尝试下三份。
 - MakerWorld 原始上传件（`designExtension.model_files`）的下载接口还没找到，名字与大小记在 `model.json` 里。

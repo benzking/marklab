@@ -4,8 +4,9 @@ import snapmaker from './snapmaker.mjs';
 import creality from './creality.mjs';
 import makerworld from './makerworld.mjs';
 import makeronlineCn from './makeronline-cn.mjs';
+import makeronlineCom from './makeronline-com.mjs';
 
-const PACKS = [snapmaker, creality, makerworld, makeronlineCn];
+const PACKS = [snapmaker, creality, makerworld, makeronlineCn, makeronlineCom];
 // aliases 让「搜索/订阅沿用旧键」和「.cn/.com 共用一个数据命名空间」都能落到同一个包上
 const BY_NAME = new Map(PACKS.flatMap((p) => [p.site, ...(p.aliases || [])].map((k) => [k, p])));
 

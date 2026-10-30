@@ -236,7 +236,7 @@ test('网址只认 hostname 白名单，路径才跑正则（构造网址进不�
   assert.equal(matchPlatform('file:///etc/passwd#https://makerworld.com/models/1'), null);
 });
 
-test('站点包与公共层认同一个网址，包认不出就交回 matchPlatform', async () => {
+test('站点包与公共层认同一个网址，四站都已进包', async () => {
   const sites = await import('./sites/index.mjs');
   const a = sites.match('https://space.snapmaker.cn/zh/model/1695-kuai-su');
   assert.deepEqual([a.name, a.id], ['snapmaker', '1695']);
@@ -253,9 +253,25 @@ test('站点包与公共层认同一个网址，包认不出就交回 matchPlatf
   assert.equal(sites.byName('makeronline.cn').platform, 'makeronline');
   // 订阅/搜索沿用旧键 makeronline，要落到 .cn 这个包上
   assert.equal(sites.byName('makeronline').site, 'makeronline.cn');
-  // 还没搬进包的站，包不认、公共层仍认（迁移期两条路并存）
-  assert.equal(sites.match('https://www.makeronline.com/zh/model/x/341770.html'), null);
-  assert.equal(matchPlatform('https://www.makeronline.com/zh/model/x/341770.html')?.name, 'makeronline');
+  // .com 是另一个独立包，数据键同样是 makeronline
+  const com = sites.match('https://www.makeronline.com/zh/model/x/341770.html');
+  assert.deepEqual([com.name, com.id], ['makeronline.com', '341770']);
+  assert.equal(sites.byName('makeronline.com').platform, 'makeronline');
+  // 两个包互不认对方的域（两套登录态，混了就认错人）
+  assert.equal(sites.byName('makeronline.cn').match('https://www.makeronline.com/model/x/1.html'), null);
+  assert.equal(sites.byName('makeronline.com').match('https://www.makeronline.cn/model/x/1.html'), null);
+  // 四站都进包了，包和公共层对每个站都认同一个 id
+  for (const [url, name, id] of [
+    ['https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7', 'creality', '68fddae0d894ed5f6ce386a7'],
+    ['https://makerworld.com.cn/zh/models/195581', 'makerworld', '195581'],
+    ['https://space.snapmaker.cn/zh/model/1695-kuai-su', 'snapmaker', '1695'],
+    ['https://www.makeronline.cn/zh/model/x/207581.html', 'makeronline.cn', '207581'],
+    ['https://www.makeronline.com/zh/model/x/341770.html', 'makeronline.com', '341770'],
+  ]) {
+    const hit = sites.match(url);
+    assert.deepEqual([hit.name, hit.id], [name, id], url);
+    assert.equal(matchPlatform(url)?.id, id, url);
+  }
 });
 
 test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () => {

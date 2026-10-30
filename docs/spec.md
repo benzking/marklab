@@ -24,6 +24,13 @@
 每个站点一个独立包，**不许在公共层写 `if (site === ...)`**。MakerOnline 的 `.cn` 和 `.com`
 是**两个各自独立实现的包**（字段、登录态、接口都不同，不抽公共层，接受约 250 行重复）。
 
+现在的五个包：`snapmaker` / `creality` / `makerworld` / `makeronline.cn` / `makeronline.com`
+（`sites/index.mjs` 登记）。包有两个名字，别混：
+
+- `site`（包键）：区分域名，登录态、cookie、请求头按它取。`makeronline.cn` 与 `makeronline.com` 不同。
+- `platform`（数据键）：库目录、判重键、进度用它。两个 MakerOnline 都是 `makeronline`。
+- 别名：`makeronline` 落到 `.cn` 包（订阅与搜索沿用四站逻辑键，默认不把海外站算进搜索预算）。
+
 一个站点包必须提供：
 
 | 能力 | 输入 | 输出 | 边界 |
