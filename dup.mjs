@@ -74,31 +74,41 @@ export async function check(model, libDir = LIB) {
   const { keys, byMeta } = await index(false, libDir);
   const self = `${model.platform}:${model.id}`;
   if (keys.has(self)) return null;
+  // 同站候选优先：同站撞上就是「确认重复」，跨站撞上只是「疑似」，不该被跨站的先到先得抢掉。
+  // 同类里取入库最早的（byMeta 已按 fetchedAt 升序），主记录才不会随扫描顺序漂。
+  let cross = null;
   for (const hit of byMeta.get(metaKey(model.title, model.author)) || []) {
     if (hit.key === self) continue;
-    return { of: hit.key, by: 'meta', same: hit.key.startsWith(`${model.platform}:`) };
+    if (hit.key.startsWith(`${model.platform}:`)) return { of: hit.key, by: 'meta', same: true };
+    cross ||= { of: hit.key, by: 'meta', same: false };
   }
-  return null;
+  return cross;
 }
 
-/** 下载后确认：作者件里有任何一个 hash 撞上，就算同一个模型。 */
+/** 下载后确认：作者件里有任何一个 hash 撞上就算同一个模型。
+ * 返回撞上的那些 hash（不是本次全部文件的），证据要能复查。 */
 export async function confirm(of, saved, libDir = LIB) {
   const { hashes } = await index(false, libDir);
   const have = hashes.get(of);
-  if (!have || !have.size) return false;
-  return (saved || []).some((f) => f.sha256 && f.origin !== 'other' && have.has(f.sha256));
+  if (!have || !have.size) return [];
+  const hit = new Set();
+  for (const f of saved || []) {
+    if (f.sha256 && f.origin !== 'other' && have.has(f.sha256)) hit.add(f.sha256);
+  }
+  return [...hit];
 }
 
 /** 记一条重复标记。重复检测本身不写 library/，只写这个文件。 */
-export async function record(platform, id, hit, extra = {}) {
+export async function record(platform, id, hit, extra = {}, file = DUP_FILE) {
   const key = `${platform}:${id}`;
   let all = {};
   try {
-    all = JSON.parse(await readFile(DUP_FILE, 'utf8'));
+    all = JSON.parse(await readFile(file, 'utf8'));
   } catch {}
   all[key] = {
     of: hit.of,
     by: hit.by,
+    scope: hit.same ? 'same' : 'cross',
     at: new Date().toISOString(),
     title: extra.title || '',
     author: extra.author || '',
@@ -106,16 +116,39 @@ export async function record(platform, id, hit, extra = {}) {
     platform,
     hashes: extra.hashes || [],
   };
-  await mkdir(DATA, { recursive: true });
-  await writeJson(DUP_FILE, all);
+  await mkdir(path.dirname(file), { recursive: true });
+  await writeJson(file, all);
   idx = null; // 标记变了，索引重建一次
   return all[key];
 }
 
+/** 删模型时清掉跟它有关的标记：以它为 key 的、以它为 of 的都要删，否则页面会指向不存在的模型。 */
+export async function forget(key, file = DUP_FILE) {
+  const all = await marks(file);
+  let changed = false;
+  for (const [k, v] of Object.entries(all)) {
+    if (k === key || v.of === key) {
+      delete all[k];
+      changed = true;
+    }
+  }
+  if (changed) {
+    await writeJson(file, all);
+    idx = null;
+  }
+  return changed;
+}
+
 /** 全部标记，给页面标「同模型」。 */
-export async function marks() {
+export async function marks(file = DUP_FILE) {
   try {
-    return JSON.parse(await readFile(DUP_FILE, 'utf8'));
+    const all = JSON.parse(await readFile(file, 'utf8'));
+    // 老标记没有 scope 字段：按「同站 / 跨站」补出来，页面不用兼容两套形状
+    for (const v of Object.values(all)) {
+      if (!v || v.scope) continue;
+      v.scope = v.platform && String(v.of).startsWith(`${v.platform}:`) ? 'same' : 'cross';
+    }
+    return all;
   } catch {
     return {};
   }

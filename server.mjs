@@ -88,14 +88,21 @@ function linkDups(m, dups, byKey) {
   const fwd = dups[key];
   if (fwd) {
     const t = byKey.get(fwd.of);
-    if (t) links.push({ key: fwd.of, title: t.title, dir: t.dir, by: fwd.by, at: fwd.at });
+    if (t) links.push({ key: fwd.of, title: t.title, dir: t.dir, by: fwd.by, scope: fwd.scope, at: fwd.at });
+    // 详情页和卡片读同一份数据：以前 duplicateOf 写了没人读，等于白写
+    m.duplicateOf = { of: fwd.of, by: fwd.by, scope: fwd.scope, at: fwd.at };
   }
   for (const [k, v] of Object.entries(dups)) {
-    if (v.of === key && k !== key) links.push({ key: k, title: v.title, url: v.url, by: v.by, at: v.at });
+    if (v.of === key && k !== key) {
+      links.push({ key: k, title: v.title, url: v.url, by: v.by, scope: v.scope, at: v.at });
+    }
   }
   if (links.length) m.sameModels = links;
   return m;
 }
+
+// 判重标记怎么念：同站命中是「确认」，跨站只有撞了 sha256 才算确认，其余是「疑似」
+const DUP_LABEL = { same: '同站同标题同作者（确认）', hash: '跨站作者件字节相同（确认）', meta: '跨站标题+作者相同（疑似）' };
 
 // 列表只发卡片字段：641 个模型连 description/rawFiles 一起发是 5.5MB，每次搜索都传一遍太贵。
 // 详情页点开时再按 dir 拉一份完整的（GET /api/model?dir=）。
@@ -255,6 +262,8 @@ const server = http.createServer(async (req, res) => {
       const found = await safeModelDir(dir);
       if (!found) return json(res, 404, { error: '没有这个模型' });
       await rm(found.dir, { recursive: true, force: true });
+      // 标记跟着模型走：删了模型还留着指向它的标记，页面会链到一个不存在的目录
+      await dup.forget(`${found.model.platform}:${found.model.id}`);
       return json(res, 200, { ok: true });
     }
 
@@ -379,8 +388,8 @@ const server = http.createServer(async (req, res) => {
             site: String(k).split(':')[0],
             title: v.title || k,
             url: v.url || '',
-            state: v.by,
-            detail: `${v.by === 'hash' ? '作者件 sha256 相同（确认）' : '标题 + 作者相同（疑似）'} → ${v.of}`,
+            state: DUP_LABEL[v.scope === 'same' ? 'same' : v.by] || v.by,
+            detail: `${DUP_LABEL[v.scope === 'same' ? 'same' : v.by] || v.by} → ${v.of}`,
           });
         }
       }

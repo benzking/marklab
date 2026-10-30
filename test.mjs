@@ -235,13 +235,39 @@ test('判重：同站标题+作者即重复，跨站要先撞 hash，同网址�
     // 作者不同 → 不是重复（两个人都叫 Benchy 也不算）
     assert.equal(await dup.check(model('snapmaker', '9', 'Benchy 小船', 'Jerry'), lib), null);
 
-    // 跨站确认：作者件 hash 撞上才算
-    assert.equal(await dup.confirm('creality:aaa', [{ sha256: 'h2' }], lib), true);
-    assert.equal(await dup.confirm('creality:aaa', [{ sha256: 'zzz' }], lib), false);
+    // 跨站确认：作者件 hash 撞上才算，返回的是撞上的那几个（证据要能复查）
+    assert.deepEqual(await dup.confirm('creality:aaa', [{ sha256: 'h2' }], lib), ['h2']);
+    assert.deepEqual(await dup.confirm('creality:aaa', [{ sha256: 'zzz' }], lib), []);
     // 别人加的配置不参与比 hash
-    assert.equal(await dup.confirm('creality:aaa', [{ sha256: 'h1', origin: 'other' }], lib), false);
+    assert.deepEqual(await dup.confirm('creality:aaa', [{ sha256: 'h1', origin: 'other' }], lib), []);
     // 没下到文件时确认不了，只能停在疑似
-    assert.equal(await dup.confirm('creality:aaa', [], lib), false);
+    assert.deepEqual(await dup.confirm('creality:aaa', [], lib), []);
+
+    // 同站和跨站都有候选时选同站那条：同站是「确认」，不能被跨站的先到先得降级成「疑似」
+    await put('snapmaker-9', {
+      platform: 'snapmaker', id: '9', title: 'Benchy 小船', author: 'Tom', fetchedAt: '2025-12-31T00:00:00Z',
+      savedFiles: [],
+    });
+    const both = await dup.check(model('creality', 'ccc', 'Benchy 小船', 'Tom'), lib);
+    assert.deepEqual([both.of, both.same], ['creality:aaa', true], '同站候选优先，哪怕跨站那条入库更早');
+  } finally {
+    await rm(base, { recursive: true, force: true });
+  }
+});
+
+test('重复标记记 scope 与撞上的 hash，删模型时两个方向一起清', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'marklab-dupmarks-'));
+  const file = path.join(base, 'duplicates.json');
+  try {
+    await dup.record('creality', 'bbb', { of: 'creality:aaa', by: 'meta', same: true }, { title: '小船', author: 'Tom' }, file);
+    await dup.record('snapmaker', '9', { of: 'creality:aaa', by: 'hash', same: false }, { title: '小船', author: 'Tom', hashes: ['h2'] }, file);
+    const all = await dup.marks(file);
+    assert.equal(all['creality:bbb'].scope, 'same');
+    assert.equal(all['snapmaker:9'].scope, 'cross');
+    assert.deepEqual(all['snapmaker:9'].hashes, ['h2'], '只记撞上的那个，不记本次全部文件');
+    // 删掉被指向的那个：以它为 of 的两条都要消失，否则页面链到不存在的目录
+    assert.equal(await dup.forget('creality:aaa', file), true);
+    assert.deepEqual(Object.keys(await dup.marks(file)), []);
   } finally {
     await rm(base, { recursive: true, force: true });
   }

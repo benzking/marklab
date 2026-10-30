@@ -190,12 +190,13 @@ if (wantFiles) {
 }
 
 // 跨站疑似：下载完比作者件的 sha256，撞上才算确认重复（同格式才可能撞，天然排除 stl 比 3mf）
-if (dupHit && !dupHit.same && saved.length && (await dup.confirm(dupHit.of, saved))) {
-  await dup.record(platform, id, { of: dupHit.of, by: 'hash' }, {
+const hitHashes = dupHit && !dupHit.same && saved.length ? await dup.confirm(dupHit.of, saved) : [];
+if (hitHashes.length) {
+  await dup.record(platform, id, { of: dupHit.of, by: 'hash', same: false }, {
     title: model.title,
     author: model.author,
     url: model.sourceUrl,
-    hashes: saved.map((f) => f.sha256),
+    hashes: hitHashes,
   });
   progress({ phase: 'duplicate', of: dupHit.of, by: 'hash' });
   console.log(`\n${platform} · ${model.title}\n  跳过：与 ${dupHit.of} 是同一个模型（作者件 sha256 相同）`);
@@ -236,7 +237,7 @@ if (dupHit && !dupHit.same) {
     title: model.title,
     author: model.author,
     url: model.sourceUrl,
-    hashes: saved.map((f) => f.sha256),
+    hashes: await dup.confirm(dupHit.of, saved),
   });
   progress({ phase: 'warning', msg: `疑似与 ${dupHit.of} 是同一模型（标题+作者相同，文件 hash 不同）` });
 }
