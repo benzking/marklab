@@ -28,6 +28,7 @@ export const DEFAULTS = {
   pageLimit: 1,
   roundLimit: 50,
   intervalHours: 8,
+  cursor: 0, // 上一轮跑到第几个「站点 × 关键字」，下轮接着跑
   enabled: true,
 };
 
@@ -109,7 +110,7 @@ export async function create(input = {}) {
     ...input,
     keywords: cleanKeywords(input.keywords),
     users: cleanUsers(input.users),
-    sites: (input.sites || DEFAULTS.sites).filter((s) => search.ALL_SITES.includes(s)),
+    sites: (input.sites || DEFAULTS.sites).filter((s) => search.allSites().includes(s)),
     id: `s_${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
     lastRunAt: null,
@@ -126,7 +127,7 @@ export async function update(id, patch = {}) {
   const next = { ...sub, ...patch, id: sub.id };
   if (Array.isArray(patch.keywords)) next.keywords = cleanKeywords(patch.keywords);
   if (Array.isArray(patch.users)) next.users = cleanUsers(patch.users);
-  if (Array.isArray(patch.sites)) next.sites = patch.sites.filter((s) => search.ALL_SITES.includes(s));
+  if (Array.isArray(patch.sites)) next.sites = patch.sites.filter((s) => search.allSites().includes(s));
   if (!(next.users || []).length && (!(next.keywords || []).length || !next.sites.length)) throw new Error('订阅至少要一个关键字或一个用户主页');
   Object.assign(sub, next);
   await persist();
@@ -189,8 +190,37 @@ export async function allHits(limit = 200) {
   return rows.sort((a, b) => String(b.matchedAt).localeCompare(String(a.matchedAt))).slice(0, limit);
 }
 
-/** 跑一轮订阅。命中的自动入队入库（全局串行，下载间隔照旧 60–150 秒）。 */
-export async function run(id) {
+// 一次「一个词 × 一个站」大约要 15 秒（最小间隔）+ 开销；预算按这个估，宁少不超
+const JOB_MS = 25_000;
+
+/** 本轮能跑多久：间隔的六成留给搜索，剩下四成留给下载（下载自己还有 60–120 秒闸门）。 */
+export function budgetMs(sub) {
+  const hours = Number(sub.intervalHours) || 8;
+  return Math.max(60_000, hours * 3600_000 * 0.6);
+}
+
+/** 一轮要跑的活：先「站点 × 关键字」，再「作者主页」。cursor 记着跑到第几个，下轮接着跑。 */
+export function planJobs(sub) {
+  const jobs = [];
+  for (const site of sub.sites || []) for (const kw of sub.keywords || []) jobs.push({ site, kw });
+  for (const u of sub.users || []) jobs.push({ site: u.site, user: u });
+  return jobs;
+}
+
+const running = new Set(); // 同一订阅同时只跑一轮（连点两次「立即跑」不会并发打站点）
+
+/** 跑一轮订阅。命中的自动入队入库（全局串行，下载间隔照旧 60–120 秒）。 */
+export async function run(id, { clock = Date.now } = {}) {
+  if (running.has(id)) throw new Error('这个订阅正在跑，等它跑完再点');
+  running.add(id);
+  try {
+    return await runOnce(id, clock);
+  } finally {
+    running.delete(id);
+  }
+}
+
+async function runOnce(id, clock) {
   const sub = await get(id);
   if (!sub) throw new Error('没有这个订阅');
   const startedAt = new Date().toISOString();
@@ -207,80 +237,91 @@ export async function run(id) {
   const seen = new Set();
   const matched = [];
   let searched = 0;
+  const errors = [];
   const pages = Math.max(1, Number(sub.pageLimit) || 1);
   const at = () => new Date().toISOString();
 
-  // 一轮几十词要跑半小时，不落进度就只能干等：每词写一次，控制台/`ipwatch --status` 看得见跑到哪
-  const planned = sub.sites.length * sub.keywords.length * pages;
-  for (const site of sub.sites) {
-    for (const kw of sub.keywords) {
-      if (!sub.enabled) break; // 停用后不再开新词：在跑的这轮到此为止，不再产出命中
-      sub.progress = { kw, site, searched, planned };
-      await persist();
-      for (let page = 1; page <= pages; page++) {
-        const r = await search.search(site, kw, { page, sort: sub.sort });
-        searched++;
-        for (const item of r.items) {
-          const key = `${item.site}:${item.id}`;
-          if (seen.has(key)) continue;
-          if (!passes(item, sub)) continue;
-          if (libKeys.has(key)) continue;
-          if (busy.has(item.url)) continue;
-          seen.add(key);
-          matched.push({ ...item, keyword: kw, matchedAt: at() });
-        }
-        if (!r.items.length) break; // 这一页空了，后面更空
-      }
-    }
-  }
+  const jobs = planJobs(sub);
+  // 上一轮没跑完就从上次停的地方接着跑，不从头再来（不然永远只搜前几个词）
+  const from = Math.min(Math.max(0, Number(sub.cursor) || 0), jobs.length);
+  const budget = budgetMs(sub);
+  const t0 = clock();
+  let next = from;
 
-  // 用户主页：主页上的全部模型，门槛/去重口径和关键字完全一样
-  for (const u of sub.users || []) {
-    if (!sub.enabled) break;
+  const take = (item, extra) => {
+    const key = `${item.site}:${item.id}`;
+    if (seen.has(key)) return;
+    if (!passes(item, sub)) return;
+    if (libKeys.has(key)) return;
+    if (busy.has(item.url)) return;
+    seen.add(key);
+    matched.push({ ...item, ...extra, matchedAt: at() });
+  };
+
+  for (; next < jobs.length; next++) {
+    if (!sub.enabled) break; // 停用后不再开新活：在跑的这轮到此为止
+    if (clock() - t0 > budget) break; // 时间到：剩下的下轮接着跑
+    const job = jobs[next];
+    sub.progress = { kw: job.kw || `@${job.user?.id || ''}`, site: job.site, searched, planned: jobs.length, from };
+    await persist();
     for (let page = 1; page <= pages; page++) {
-      const r = await search.userModels(u.site, u.id, { page });
+      const r = job.user
+        ? await search.userModels(job.site, job.user.id, { page })
+        : await search.search(job.site, job.kw, { page, sort: sub.sort });
       searched++;
-      for (const item of r.items) {
-        const key = `${item.site}:${item.id}`;
-        if (seen.has(key)) continue;
-        if (!passes(item, sub)) continue;
-        if (libKeys.has(key)) continue;
-        if (busy.has(item.url)) continue;
-        seen.add(key);
-        matched.push({ ...item, user: u.name || u.id, matchedAt: at() });
+      if (r.error) {
+        // 搜索失败 ≠ 搜到 0 条：记下来，别当成「后面更空」直接收工
+        errors.push(`${job.site}${job.kw ? `「${job.kw}」` : ''}：${r.error}`);
+        break;
       }
-      if (!r.items.length) break;
+      for (const item of r.items) {
+        take(item, job.user ? { user: job.user.name || job.user.id } : { keyword: job.kw });
+      }
+      if (!r.items.length) break; // 这一页真的空了，后面更空
     }
   }
 
-  let lastError = null;
   const stopped = !sub.enabled; // 跑到一半被点「停止」：已搜到的照记历史，但不再往库里塞
   const ordered = sortItems(matched, sub.sort);
   const limit = Math.max(1, Number(sub.roundLimit) || 50);
   const truncated = Math.max(0, ordered.length - limit);
-  const take = ordered.slice(0, limit);
+  const queued = ordered.slice(0, limit);
 
-  if (!stopped && take.length) {
+  let lastError = errors.length ? `搜索失败 ${errors.length} 次：${errors.slice(0, 2).join('；')}` : null;
+
+  if (!stopped && queued.length) {
     // 磁盘不够就别排了：写一半失败比没排更糟（同一道闸门，手动入队也走它）
     const free = await stats.freeSpace();
     if (free != null && free < 5 * 1024 ** 3) {
       lastError = `磁盘不足：只剩 ${(free / 1024 ** 3).toFixed(1)} GB，本轮不排队`;
     } else {
-      for (const hit of take) {
+      for (const hit of queued) {
         const { task } = await tasks.enqueue({ url: hit.url, source: 'subscribe', subId: sub.id });
         hit.taskId = task.id;
       }
     }
   }
-  if (take.length) await appendHits(sub.id, take);
+  if (queued.length) await appendHits(sub.id, queued);
 
+  // 跑到哪了：下轮从 next 接着跑；跑到头就归零，下一轮重新扫一遍
+  sub.cursor = next >= jobs.length ? 0 : next;
   delete sub.progress;
   sub.lastRunAt = new Date().toISOString();
-  sub.lastResult = { at: sub.lastRunAt, startedAt, searched, matched: take.length, truncated, stopped };
+  sub.lastResult = {
+    at: sub.lastRunAt,
+    startedAt,
+    searched,
+    matched: queued.length,
+    truncated,
+    stopped,
+    jobs: jobs.length,
+    from,
+    cursor: sub.cursor,
+  };
   if (lastError) sub.lastResult.error = lastError;
   await persist();
 
-  return { sub, hits: take, truncated, searched };
+  return { sub, hits: queued, truncated, searched };
 }
 
 /** 服务端定时器每分钟调一次：到点的订阅挨个跑（订阅之间也串行，别和下载抢带宽）。 */

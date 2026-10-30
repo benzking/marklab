@@ -6,7 +6,8 @@ import * as sites from './sites/index.mjs';
 // 不默认进，免得把搜索预算翻倍）。
 export const SITES = sites.all().filter((p) => p.discover !== false).map((p) => p.searchKey || p.site);
 // 显式指定时允许的键（含别名），订阅校验用它
-export const ALL_SITES = [...new Set(sites.all().flatMap((p) => [p.searchKey || p.site, ...(p.aliases || [])]))];
+// 函数而不是常量：站点包是运行时可注册的（测试里会加假站点），常量会在 import 时就冻住
+export const allSites = () => [...new Set(sites.all().flatMap((p) => [p.searchKey || p.site, ...(p.aliases || [])]))];
 export const RATE = { perSite: 4, windowMs: 60_000, minGapMs: 15_000 };
 
 /** 纯函数：用户主页网址 → {site, id}。每个站点包自己认自己的写法，认不出返回 null（不猜）。 */
@@ -45,7 +46,11 @@ function waitTurn(site) {
   lastAt.set(site, now);
 }
 
+// 测试缝：真等 15 秒一条会把测试拖成几分钟，跑测试时关掉节流
+const NO_RATE = process.env.MARKLAB_TEST_NORATE === '1';
+
 function throttle(site) {
+  if (NO_RATE) return Promise.resolve();
   const next = (lanes.get(site) || Promise.resolve()).then(() => waitTurn(site));
   lanes.set(site, next);
   return next;
@@ -66,7 +71,7 @@ export async function userModels(site, uid, { page = 1, pageSize = 20 } = {}) {
     return { ...base, total: r.total, items: r.items };
   } catch (e) {
     console.error(`[user] ${site} ${id} 失败：${e.message}`);
-    return base;
+    return { ...base, error: String(e.message || e).slice(0, 200) };
   }
 }
 
@@ -81,8 +86,9 @@ export async function search(site, keyword, { page = 1, sort = 'downloads', page
     const r = await pack.search({ keyword: kw, page, pageSize, sort });
     return { ...base, total: r.total, items: r.items };
   } catch (e) {
+    // 调用方要能分清「搜到 0 条」和「搜索失败」——两者对订阅的含义完全不同
     console.error(`[search] ${site} 失败：${e.message}`);
-    return base;
+    return { ...base, error: String(e.message || e).slice(0, 200) };
   }
 }
 

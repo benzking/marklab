@@ -425,10 +425,13 @@ function thresholdText(s) {
 function lastResultText(s) {
   if (!s.lastRunAt) return '还没跑过';
   const r = s.lastResult || {};
-  if (r.error) return `上次失败：${r.error}`;
+  if (r.error) return `上次有问题：${r.error}`;
   if (r.matched == null) return '上次结果未记录';
   const truncated = Number(r.truncated) > 0 ? `，截断 ${fmtNum(r.truncated)}` : '';
-  return `命中 ${fmtNum(r.matched)}${truncated}${r.stopped ? '（中途停止，未入库）' : ''}`;
+  // 一轮没跑完：说清跑到哪了，下轮会接着跑
+  const where =
+    r.jobs && r.cursor > 0 ? `，本轮跑到第 ${fmtNum(r.cursor)}/${fmtNum(r.jobs)} 个词（下轮接着跑）` : '';
+  return `命中 ${fmtNum(r.matched)}${truncated}${where}${r.stopped ? '（中途停止，未入库）' : ''}`;
 }
 
 function subListItem(s) {

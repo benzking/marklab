@@ -689,3 +689,102 @@ test('判重索引每轮重建：别的进程新写的模型，下一轮订阅�
   assert.equal((await index(true, lib)).keys.has('creality:bbb'), true, 'force 重建要看到新模型');
   await rm(lib, { recursive: true, force: true });
 });
+
+// ── 订阅：失败要记下来、一轮跑不完要接着跑 ──────────────────────
+async function runSubs(code) {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-subs-'));
+  await mkdir(path.join(base, 'data'), { recursive: true });
+  const cp = spawn(process.execPath, ['-e', code], {
+    // NORATE：搜索节流是真等 15 秒，测试里关掉（跟 NOSPAWN 同一类缝）
+    env: { ...process.env, MARKLAB_ROOT: base, MARKLAB_TEST_NOSPAWN: '1', MARKLAB_TEST_NORATE: '1' },
+  });
+  let out = '';
+  let err = '';
+  cp.stdout.on('data', (d) => (out += d));
+  cp.stderr.on('data', (d) => (err += d));
+  await new Promise((res) => cp.on('close', res));
+  await rm(base, { recursive: true, force: true });
+  return { out, err };
+}
+
+test('订阅：搜索失败要记进 lastResult.error，不能当成「搜到 0 条」', async () => {
+  const { out, err } = await runSubs(`
+    import * as sites from '/home/gly/marklab/sites/index.mjs';
+    import * as subs from '/home/gly/marklab/subs.mjs';
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); },
+      fileLinks: async () => [],
+      search: async () => { throw new Error('接口 500'); },
+      userModels: async () => { throw new Error('接口 500'); },
+    });
+    const sub = await subs.create({ name: 't', keywords: ['x'], sites: ['fixture'], roundLimit: 5 });
+    const r = await subs.run(sub.id);
+    console.log(JSON.stringify(r.sub.lastResult));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.match(String(r.error), /搜索失败/, `失败要写进 lastResult.error，实际：${JSON.stringify(r)}`);
+  assert.equal(r.searched, 1, '失败也要算搜过一次');
+  assert.equal(err.includes('不该走到这里'), false);
+});
+
+test('订阅：一轮跑不完就记「跑到第 N 个」，下一轮从 N 接着跑', async () => {
+  const { out } = await runSubs(`
+    import * as sites from '/home/gly/marklab/sites/index.mjs';
+    import * as subs from '/home/gly/marklab/subs.mjs';
+    const seen = [];
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async ({ keyword }) => { seen.push(keyword); return { total: 0, items: [] }; },
+      userModels: async () => ({ total: 0, items: [] }),
+    });
+    const kw = Array.from({ length: 8 }, (_, i) => 'k' + i);
+    const sub = await subs.create({ name: 't', keywords: kw, sites: ['fixture'], intervalHours: 1 });
+    // 假时钟：每问一次前进 10 分钟，预算 1h*0.6 = 36 分钟 → 只跑得完前几个
+    let t = 0;
+    const clock = () => (t += 600_000);
+    const first = await subs.run(sub.id, { clock });
+    const firstCursor = first.sub.lastResult.cursor;
+    const firstSeen = seen.length;
+    const second = await subs.run(sub.id, { clock });
+    console.log(JSON.stringify({ firstCursor, firstSeen, jobs: first.sub.lastResult.jobs, secondFrom: second.sub.lastResult.from, secondCursor: second.sub.lastResult.cursor }));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.jobs, 8, '八个词就是八个活');
+  assert.ok(r.firstCursor > 0 && r.firstCursor < 8, `第一轮应该只跑一部分，实际 cursor=${r.firstCursor}`);
+  assert.equal(r.firstSeen, r.firstCursor, '跑几个词就搜几次');
+  assert.equal(r.secondFrom, r.firstCursor, '第二轮从上一轮停下的地方接着跑');
+});
+
+test('订阅：连点两次「立即跑」不会并发打站点', async () => {
+  const { out } = await runSubs(`
+    import * as sites from '/home/gly/marklab/sites/index.mjs';
+    import * as subs from '/home/gly/marklab/subs.mjs';
+    let inflight = 0;
+    let peak = 0;
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async () => {
+        inflight++; peak = Math.max(peak, inflight);
+        await new Promise((r) => setTimeout(r, 30));
+        inflight--;
+        return { total: 0, items: [] };
+      },
+      userModels: async () => ({ total: 0, items: [] }),
+    });
+    const sub = await subs.create({ name: 't', keywords: ['a', 'b', 'c'], sites: ['fixture'] });
+    const p = subs.run(sub.id);
+    let rejected = false;
+    try { await subs.run(sub.id); } catch { rejected = true; }
+    await p;
+    console.log(JSON.stringify({ rejected, peak }));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.rejected, true, '第二次点要直接被拒');
+  assert.equal(r.peak, 1, '任何时刻最多一个搜索在飞');
+});

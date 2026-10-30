@@ -40,7 +40,9 @@ export async function index(force = false, libDir = LIB) {
   const byMeta = new Map(); // metaKey -> [{ key, at }]，按入库时间升序
   const hashes = new Map(); // "site:id" -> Set<sha256>
   const keys = new Set(); // 已入库的全部 "site:id"，订阅用来排除已入库
-  for (const entry of await readdir(libDir, { withFileTypes: true })) {
+  // 库还没建（全新安装 / 临时根）就当空库，别让订阅第一轮就崩
+  const entries = await readdir(libDir, { withFileTypes: true }).catch(() => []);
+  for (const entry of entries) {
     if (!entry.isDirectory()) continue;
     let m;
     try {
