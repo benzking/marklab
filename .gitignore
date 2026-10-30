@@ -6,7 +6,13 @@ logs/
 # 模型库数据（207 条 3mf/stl 与图片，约 4.8 GB，不入库）
 library/
 
+# 控制台数据（任务日志、订阅、重复标记、标签池），不入库
+data/
+
 # 系统与临时
 .DS_Store
 Thumbs.db
 _tmp_*
+
+# 本地草稿（拆票、临时笔记），不入库
+.scratch/

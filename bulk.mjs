@@ -6,19 +6,18 @@
 //   node bulk.mjs --loop 6h                  # 长期跑：每 6 小时补一次新模型
 //
 // 规矩（按需求定的）：
-//   · 两次下载之间随机间隔，且不少于 60 秒——1 分钟最多下 1 个
+//   · 限速由 server 的全局队列管（模型间 60–120 秒 + 模型内每文件 5–10 秒），这里不自己排队
 //   · 按「链接」和「标题+作者」双重去重，抓过的直接跳过
 //   · 每抓一个立刻写一行日志：library/_bulk-log.md（人看）+ library/_bulk-log.csv（Excel）
 
-import { spawn } from 'node:child_process';
-import { readFile, writeFile, appendFile, readdir, mkdir } from 'node:fs/promises';
+import { readFile, appendFile, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { ROOT } from './lib.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
 const LIB = path.join(ROOT, 'library');
 const LOG_MD = path.join(LIB, '_bulk-log.md');
 const LOG_CSV = path.join(LIB, '_bulk-log.csv');
+const API = `http://127.0.0.1:${process.env.MARKLAB_PORT || 8851}`;
 
 const argv = process.argv.slice(2);
 const flag = (name, def) => {
@@ -30,15 +29,12 @@ const has = (name) => argv.includes(`--${name}`);
 const site = flag('site', 'snapmaker');
 const limit = Number(flag('limit', '20'));
 const maxPages = Number(flag('max-pages', '10'));
-const minGap = Number(flag('min-gap', '60')) * 1000; // 秒 → 毫秒
-const maxGap = Number(flag('max-gap', '150')) * 1000;
 const loopEvery = flag('loop', '');
 const dryRun = has('dry-run');
 const retryEmpty = has('retry-empty'); // 把「有介绍没文件」的再试一次（比如刚登录过）
 const summary = has('summary'); // 只看统计（同一个模型以最后一行为准）
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-const rand = (a, b) => Math.floor(a + Math.random() * (b - a));
 
 // ── 榜单：Snapmaker 精选 + 热门（公开接口，不需要 token）────────────
 async function fetchSnapmakerHot() {
@@ -109,15 +105,34 @@ async function logRow(row) {
   await appendFile(LOG_CSV, `${cells.map(csvCell).join(',')},${csvCell(row.url)}\n`);
 }
 
-function runGrab(url) {
-  return new Promise((resolve) => {
-    const started = Date.now();
-    const child = spawn(process.execPath, [path.join(ROOT, 'grab.mjs'), url], { cwd: ROOT });
-    let out = '';
-    child.stdout.on('data', (d) => (out += d.toString()));
-    child.stderr.on('data', (d) => (out += d.toString()));
-    child.on('close', (code) => resolve({ code, out, seconds: Math.round((Date.now() - started) / 1000) }));
+// 走 server 队列而不是自己 spawn：批抓的每条也进控制台任务页，进度/失败/重复标记一套逻辑，
+// 限速闸门（模型间 60–120s）也只有 server 进程在守，这里不自己排队。
+async function runGrab(url) {
+  const r = await fetch(`${API}/api/grab`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ url }),
   });
+  const j = await r.json();
+  if (r.status === 400) return { code: 2, files: '0', seconds: 0, note: j.error || '网址不被识别' };
+  if (r.status !== 202) return { code: 1, files: '0', seconds: 0, note: j.error || `HTTP ${r.status}` };
+  // 轮询任务直到终态（done/duplicate 算成功）；超时 30 分钟算失败
+  const until = Date.now() + 30 * 60_000;
+  while (Date.now() < until) {
+    const tr = await fetch(`${API}/api/console/tasks`);
+    const list = await tr.json();
+    const t = Array.isArray(list) ? list.find((x) => x.id === j.taskId) : (list.tasks || []).find((x) => x.id === j.taskId);
+    if (t) {
+      const end = new Set(['done', 'duplicate', 'failed', 'interrupted', 'stopped']);
+      if (end.has(t.phase)) {
+        const seconds = Math.round((Date.parse(t.endedAt || 0) - Date.parse(t.startedAt || 0)) / 1000);
+        const ok = t.phase === 'done' || t.phase === 'duplicate';
+        return { code: ok ? 0 : 1, files: String((t.progress || {}).done || 0), seconds, note: t.error || t.warning || '' };
+      }
+    }
+    await sleep(3000);
+  }
+  return { code: 1, files: '0', seconds: 0, note: '任务 30 分钟没跑完' };
 }
 
 async function round() {
@@ -136,23 +151,12 @@ async function round() {
   }
 
   let done = 0;
-  let lastStart = 0;
   for (const m of todo) {
     if (done >= limit) break;
-    const wait = lastStart + rand(minGap, maxGap) - Date.now();
-    if (wait > 0) {
-      console.log(`  等 ${Math.round(wait / 1000)} 秒再下（保持 1 分钟最多 1 个）`);
-      await sleep(wait);
-    }
-    lastStart = Date.now();
-    const r = await runGrab(m.url);
-    const files = (r.out.match(/文件\s+(\d+) 个/) || [])[1] || '0';
+    const r = await runGrab(m.url); // 60–120 秒间隔在 server 队列里等，这里不管
+    const files = r.files;
     const empty = files === '0';
-    const note = r.code !== 0
-      ? (r.out.match(/文件下载失败：(.+)/) || [])[1] || `退出码 ${r.code}`
-      : empty
-        ? '站点没有给文件直链'
-        : '';
+    const note = r.note || (r.code !== 0 ? `退出码 ${r.code}` : '');
     await logRow({
       time: new Date().toLocaleString('zh-CN', { hour12: false }),
       site: m.site,

@@ -7,18 +7,33 @@
 //   snapmaker  页面 SSR（必须带 -model 这种 slug）里就有完整打印配置；模型文件是私链 CDN，HTTP 直下
 //   creality   页面 SSR 里的 __NUXT_DATA__ 是 modelGroupDetail；文件要登录态
 //   makerworld 整站挡非浏览器 UA，详情与 f3mf 都必须在页面里 fetch
-// 后两个借浏览器跑页面内 JS：优先 bsk（用户已登录的 Chrome），连不上时退到内置无头 chromium（只够抓公开数据）。
+// 后两个借浏览器跑页面内 JS：连的是本机常驻 Chromium（CDP 9223，ADR-0002），不 launch 新浏览器。
 
-import { mkdir, writeFile, readFile } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
+import { createHash } from 'node:crypto';
 import path from 'node:path';
-import vm from 'node:vm';
-import { fileURLToPath } from 'node:url';
-import { matchPlatform, resolveNuxt, sanitize, slugify, autoTags } from './lib.mjs';
-import { evalInPage, browserConnected } from './browser.mjs';
+import { ROOT, matchPlatform, resolveNuxt, sanitize, slugify, autoTags, writeJson, fmtHours } from './lib.mjs';
+import { evalInPage, browserConnected, fetchAs, closePages } from './channel.mjs';
+import { UA, httpGet } from './sites/_http.mjs';
+import * as sites from './sites/index.mjs';
+import * as dup from './dup.mjs';
 
-const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)));
-const UA = 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36';
+// 签名链接里的 % 偶尔不合法，decode 抛错不该让整份文件列表失败
+const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return String(s);
+  }
+};
+
+// 没下到文件时给控制台看的原因
+const NO_FILES_TEXT = {
+  login: '文件一个都没下到：站点要求登录态',
+  parse: '文件一个都没下到：站点给了文件列表但没拿到直链（可能改版了）',
+  none: '站点没给文件直链（这类模型只能在站点里下）',
+};
 
 const args = process.argv.slice(2);
 const valueOf = (flag) => {
@@ -29,38 +44,60 @@ const url = args.find((a) => /^https?:/.test(a));
 const outRoot = path.resolve(ROOT, valueOf('--out') || 'library');
 const wantFiles = !args.includes('--no-files');
 
+// 结构化进度：只有任务队列（server/tasks.mjs）要，手工跑不加噪音
+// playwright 的 WS 会撑住事件循环，抓完必须自己退；先等 stdout 冲干净再退，否则日志会被截断
+// 退出前先关掉自己开的标签页（不关就会在用户 Chrome 里越堆越多），最多等 3 秒
+// 这个 Promise 故意永不 resolve：调用方必须 await，否则后面的代码会继续跑（曾因此写出幽灵模型）
+const exit = (code = 0) =>
+  Promise.race([closePages(), new Promise((r) => setTimeout(r, 3000))])
+    .catch(() => {}) // 关标签页失败也照退，不然会在这里打转
+    .then(() => new Promise(() => process.stdout.write('', () => process.exit(code))));
+
+// 没接住的错误 / 被停止也要先关标签页再退（ADR-0005 补记 11）
+const fatal = (e) => {
+  console.error(`\n抓取失败：${e?.message || e}`);
+  exit(1);
+};
+process.on('unhandledRejection', fatal);
+process.on('uncaughtException', fatal);
+process.on('SIGTERM', () => {
+  console.error('\n收到停止信号');
+  exit(1);
+});
+
+const progress = (o) => {
+  if (process.env.MARKLAB_TASK) process.stdout.write(`@@TASK ${JSON.stringify(o)}\n`);
+};
+
 if (!url) {
   console.error('用法: node grab.mjs <模型页网址> [--no-files] [--out 目录]');
   process.exit(1);
 }
 
 // ── 通用工具 ────────────────────────────────────────────────────
-async function httpGet(target) {
-  const r = await fetch(target, {
-    headers: {
-      'user-agent': UA,
-      accept: 'text/html,application/xhtml+xml,application/json;q=0.9,*/*;q=0.8',
-      'accept-language': 'zh-CN,zh;q=0.9',
-    },
-    redirect: 'follow',
-  });
-  return { status: r.status, text: await r.text() };
-}
 
-async function download(target, dest) {
-  const r = await fetch(target, { headers: { 'user-agent': UA } });
-  if (!r.ok) throw new Error(`下载失败 ${r.status} ${target.slice(0, 80)}`);
-  const buf = Buffer.from(await r.arrayBuffer());
-  await writeFile(dest, buf);
-  return buf.length;
+// 图片/缩略图走公开 CDN，匿名就够；模型文件要登录态（ADR-0003），所以多一个 site 参数。
+// 失败最多试 3 次（本任务内 attempts 上限），第 2 次起强制重取登录态——大概率是登录态过期。
+async function download(target, dest, site) {
+  let lastErr;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const r = site
+        ? await fetchAs(site, target, { headers: { 'user-agent': UA } }, attempt > 0)
+        : await fetch(target, { headers: { 'user-agent': UA } });
+      if (!r) throw new Error('浏览器没连上，拿不到登录态');
+      if (!r.ok) throw new Error(`下载失败 ${r.status} ${target.slice(0, 80)}`);
+      const buf = Buffer.from(await r.arrayBuffer());
+      await writeJson(dest, buf);
+      // 边写边算：文件级去重要 hash，反正 buf 已经在内存里，多这一步是零额外 I/O
+      return { bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw lastErr;
 }
-
-// 秒 → "64.3 h" / "26.2 h" / "12 分钟"，与站点显示口径一致
-const fmtHours = (sec) => {
-  if (!sec) return '';
-  const h = sec / 3600;
-  return h >= 1 ? `${h.toFixed(1)} h` : `${Math.round(sec / 60)} 分钟`;
-};
 
 // ── 站点适配器 ──────────────────────────────────────────────────
 
@@ -69,7 +106,7 @@ const fmtHours = (sec) => {
 const creality = {
   async meta(id, pageUrl) {
     const canonical = `https://www.crealitycloud.cn/model-detail/${id}`;
-    const { text } = await httpGet(pageUrl.split('#')[0]);
+    const { text } = await httpGet(pageUrl);
     const raw = /<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(text)?.[1];
     if (!raw) throw new Error('页面里没有 __NUXT_DATA__（站点结构变了？）');
     const state = resolveNuxt(JSON.parse(raw)).data;
@@ -131,6 +168,7 @@ const creality = {
       size: f.fileSize,
       id: f.id,
       kind: 'model',
+      origin: 'author',
     }));
 
     // 说明文件（PDF 等）单独一个接口
@@ -245,6 +283,7 @@ const makerworld = {
       }));
       return {
         title: j.title, author: (j.designCreator && (j.designCreator.name || j.designCreator.handle)) || '',
+        authorUid: j.designCreator?.uid || null,
         authorAvatar: (j.designCreator && (j.designCreator.avatar || j.designCreator.avatarUrl)) || '',
         description: j.summary || j.description || '', cover: j.coverUrl || j.coverLandscape || '',
         likes: j.likeCount, downloads: j.downloadCount, collects: j.collectionCount, comments: j.commentCount,
@@ -259,13 +298,14 @@ const makerworld = {
             downloads: i.downloadCount, prints: i.printCount, isDefault: i.isDefault,
             timeSec: i.prediction, weightG: i.weight, materialCnt: i.materialCnt, needAms: i.needAms,
             instanceCreator: i.instanceCreator ? (i.instanceCreator.name || true) : null,
+            creatorUid: i.instanceCreator?.uid || null,
             ratingCount: i.ratingCount, ratingTotal: i.ratingScoreTotal,
             projectSettings: mi.projectSettings || {}, plates: platesOf(mi),
             filaments: filamentsOf(i.instanceFilaments),
             machines: [...compat, ...(mi.otherCompatibility || [])].map(m => ({ name: m.devProductName, code: m.devModelName, nozzle: m.nozzleDiameter })),
           };
         }),
-        rawFiles: ((j.designExtension && j.designExtension.model_files) || []).map(f => ({ name: f.modelName, size: f.modelSize, type: f.modelType })),
+        rawFiles: ((j.designExtension && j.designExtension.model_files) || []).map(f => ({ name: f.modelName, size: f.modelSize, type: f.modelType, origin: 'author' })),
       };
     })()`;
     const { value: d, via } = await evalInPage(`https://makerworld.com.cn/zh/models/${id}`, js, { wait: 6000 });
@@ -276,6 +316,7 @@ const makerworld = {
       sourceUrl: `https://makerworld.com.cn/zh/models/${id}`,
       title: d.title,
       author: d.author,
+      authorUid: d.authorUid,
       authorAvatar: d.authorAvatar,
       description: sanitize(d.description),
       images: [d.cover, ...d.instances.flatMap((i) => [i.cover, ...i.pictures])].filter(Boolean),
@@ -319,6 +360,7 @@ const makerworld = {
         filaments: i.filaments || [],
         thumbnail: i.cover || '',
         isDefault: i.isDefault,
+        creatorUid: i.creatorUid,
         url: `https://makerworld.com.cn/zh/models/${id}#profileId-${i.id}`,
       })),
       files: d.rawFiles,
@@ -326,216 +368,58 @@ const makerworld = {
       via,
     };
   },
-  // 打印配置 3mf；如果站点对某个机型给了单独文件，一并收下（按名字+大小去重）
+  // 打印配置 3mf：每个 instance 一份。别人加的配置（instanceCreator ≠ 作者）标 other，判重时不比。
   async fileLinks(model) {
-    const machines = (model.print?.machines || []).filter((m) => ['A1', 'H2C'].includes(m.name));
     const js = `(async () => {
       const out = [];
-      const grab = async (id, q) => {
-        const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf' + q, { headers: { accept: 'application/json' } });
-        if (!r.ok) return null;
+      const errs = [];
+      for (const [id, mine] of ${JSON.stringify(
+        (model.fileIds || []).map((id, i) => {
+          const c = model.profiles?.[i]?.creatorUid;
+          return [id, !c || !model.authorUid || String(c) === String(model.authorUid)];
+        }),
+      )}) {
+        const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf', { headers: { accept: 'application/json' } });
+        if (!r.ok) {
+          let t = '';
+          try { t = (await r.json()).error || ''; } catch {}
+          errs.push(t || 'HTTP ' + r.status);
+          // 没登录时整站都不给文件，别再一个个配置试下去，直接放弃等登录后统一补抓
+          if (r.status === 403 || /登录|forbidden|unauthor/i.test(t)) break;
+          continue;
+        }
         const j = await r.json();
-        return j && j.url ? { name: j.name, url: j.url, size: j.size } : null;
-      };
-      for (const id of ${JSON.stringify(model.fileIds)}) out.push(await grab(id, ''));
-      for (const [id, code, name] of ${JSON.stringify(machines.map((m) => [model.fileIds[0], m.code, m.name]))}) {
-        out.push(Object.assign(await grab(id, '?machine=' + code) || {}, { machine: name }));
+        if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine });
       }
-      return out.filter(Boolean);
+      return { out, errs };
     })()`;
     const { value: res } = await evalInPage(model.sourceUrl, js, { wait: 6000 });
-    const seen = new Set();
-    const links = [];
-    for (const r of res) {
-      const key = `${r.name}|${r.size}`;
-      if (seen.has(key)) continue; // 站点忽略 machine 参数时会把通用件再给一遍，这里去掉
-      seen.add(key);
-      const suffix = r.machine ? `-${r.machine}` : '';
-      links.push({ name: `${r.name || 'model'}${suffix}`, url: r.url, size: r.size, kind: r.machine ? 'machine' : 'profile' });
+    if (!res.out.length && res.errs.length) {
+      const first = res.errs[0];
+      throw new Error(/登录|403|forbidden|unauthor/i.test(first) ? `MakerWorld 没登录，拿不到文件：${first}` : first);
     }
-    return links;
+    return res.out.map((r) => ({
+      name: r.name || 'model',
+      url: r.url,
+      size: r.size,
+      kind: 'profile',
+      origin: r.mine ? 'author' : 'other',
+    }));
   },
 };
 
-// Snapmaker Space：页面 SSR（带 slug 的地址）里就有完整打印配置，模型文件私链 CDN 直下
-function objectAround(text, key) {
-  const i = text.indexOf(key);
-  if (i < 0) return null;
-  let start = -1;
-  let depth = 0;
-  for (let k = i; k >= 0; k--) {
-    const c = text[k];
-    if (c === '}') depth++;
-    else if (c === '{') {
-      if (depth === 0) {
-        start = k;
-        break;
-      }
-      depth--;
-    }
-  }
-  if (start < 0) return null;
-  let d = 0;
-  let end = -1;
-  let inStr = false;
-  let esc = false;
-  for (let k = start; k < text.length; k++) {
-    const c = text[k];
-    if (inStr) {
-      if (esc) esc = false;
-      else if (c === '\\') esc = true;
-      else if (c === '"') inStr = false;
-      continue;
-    }
-    if (c === '"') {
-      inStr = true;
-      continue;
-    }
-    if (c === '{') d++;
-    else if (c === '}') {
-      d--;
-      if (d === 0) {
-        end = k;
-        break;
-      }
-    }
-  }
-  if (end < 0) return null;
-  try {
-    return JSON.parse(text.slice(start, end + 1));
-  } catch {
-    return null;
-  }
-}
-
-const snapmaker = {
-  async meta(id, pageUrl) {
-    // 带 slug 的地址才有完整 SSR（/model/1695-model 与 /model/1695 内容不一样）
-    const canonical = pageUrl.split('#')[0].split('?')[0];
-    const { text: html } = await httpGet(canonical);
-    const flight = [...html.matchAll(/self\.__next_f\.push\(\[1,("(?:[^"\\]|\\.)*")\]\)/g)]
-      .map((m) => JSON.parse(m[1]))
-      .join('');
-    const profile = objectAround(flight, '"partitions"');
-    const api = await (
-      await fetch(`https://api-models.snapmaker.cn/api/model/detail/${id}`, {
-        headers: { accept: 'application/json', origin: 'https://space.snapmaker.cn', referer: 'https://space.snapmaker.cn/' },
-      })
-    ).json();
-    const d = api.data || {};
-    const abs = (u) => (!u ? '' : /^https?:/.test(u) ? u : `https://cdn-model-private.snapmaker.cn/${u.replace(/^\/+/, '')}`);
-    const fileUrl = abs(profile?.fileUrl || d.fileUrl);
-    const fileName = profile?.fileName || d.fileName || (fileUrl.split('/').pop() || 'model.3mf');
-    return {
-      platform: 'snapmaker',
-      id,
-      sourceUrl: canonical,
-      title: (d.translatedLang === 'zh' && d.translatedTitle) || d.title || fileName,
-      author: d.creatorName || '',
-      authorAvatar: d.creatorAvatar || '',
-      description: sanitize((d.translatedLang === 'zh' && d.translatedDescription) || d.description),
-      images: [d.coverUrl, ...(d.images || [])].filter(Boolean),
-      stats: { downloads: d.downloadCount },
-      picked: Boolean(d.isRecommended || d.isPicked || d.isFeatured),
-      category: d.categoryNameKey || '',
-      tags: (d.tags || []).map((t) => (typeof t === 'string' ? t : t.name)).filter(Boolean),
-      publishedAt: d.createdAt || d.createTime || null,
-      translated: d.translatedLang === 'zh' && Boolean(d.translatedTitle) && d.translatedTitle !== d.title,
-      print: profile
-        ? {
-            profileTitle: profile.translatedTitle || profile.name,
-            thumb: (profile.pictures || [])[0],
-            timeSec: profile.secs,
-            timeText: profile.time || fmtHours(profile.secs),
-            weightG: profile.weight,
-            plates: profile.plates,
-            nozzle: profile.printerType,
-            filaments: (profile.filaments || []).map((f) => ({ type: f.type, color: f.color, usedG: f.used_g })),
-            plateList: (profile.partitions || []).map((p) => ({
-              name: p.name,
-              timeSec: p.secs,
-              weightG: p.weight,
-              thumb: (p.pics || [])[0],
-              filaments: (p.filaments || []).map((f) => ({ type: f.type, color: f.color, usedG: f.used_g })),
-            })),
-            machines: [],
-            source: 'ssr',
-          }
-        : null,
-      profiles: profile
-        ? [{
-            id: 'ssr',
-            name: profile.translatedTitle || profile.name || '默认打印配置',
-            machine: '',
-            machines: [],
-            plates: profile.plates || 0,
-            plateList: (profile.partitions || []).map((pt) => ({
-              name: pt.name,
-              timeSec: pt.secs,
-              weightG: pt.weight,
-              thumb: (pt.pics || [])[0],
-              filaments: (pt.filaments || []).map((x) => ({ type: x.type, color: x.color, usedG: x.used_g })),
-            })),
-            timeSec: profile.secs,
-            timeText: profile.time || fmtHours(profile.secs),
-            weightG: Math.round((profile.weight || 0) * 10) / 10,
-            nozzle: profile.printerType || '',
-            layerHeight: '', wallLoops: '', infill: '', bed: '',
-            size: 0,
-            filaments: (profile.filaments || []).map((x) => ({ type: x.type, color: x.color, usedG: x.used_g })),
-            thumbnail: (profile.pictures || [])[0] || '',
-            isDefault: true,
-            url: canonical,
-          }]
-        : [],
-      files: fileUrl ? [{ name: fileName, format: (fileName.match(/\.(\w+)$/) || [])[1] || '3mf', size: d.fileSize, url: fileUrl }] : [],
-      fileIds: fileUrl ? [fileUrl] : [],
-    };
-  },
-  async fileLinks(model) {
-    if (model.files.length) return model.files.map((f) => ({ name: f.name, url: f.url, size: f.size, kind: 'model' }));
-
-    // 没有公开直链的（约 17%）：文件在「打印配置」里，只有登录态能取
-    // 站点自己的做法是 GET /api/model/download/<id>，带 Authorization: Bearer <login_access_token>
-    const js = `(async () => {
-      const ck = Object.fromEntries(document.cookie.split('; ').map(s => { const i = s.indexOf('='); return [s.slice(0,i), s.slice(i+1)]; }));
-      const tok = ck['login_access_token'] || '';
-      if (!tok) return { code: 401, msg: 'no login_access_token' };
-      const r = await fetch('https://api-models.snapmaker.cn/api/model/download/${model.id}', {
-        headers: { accept: 'application/json', Authorization: 'Bearer ' + tok }, credentials: 'include',
-      });
-      const t = await r.text();
-      let j = null; try { j = JSON.parse(t); } catch {}
-      return { code: j && j.code, msg: j && j.msg, data: (j && j.data) || null };
-    })()`;
-    const { value } = await evalInPage(model.sourceUrl, js, { wait: 5000 });
-    const d = value.data || {};
-    const links = [
-      ...(d.modelFiles || []).map((f) => ({ name: f.fileName || f.name || 'model', url: f.downloadUrl || f.url || '', size: f.fileSize || f.size })),
-      ...(d.printProfiles || []).map((p) => ({ name: p.fileName || 'profile.3mf', url: p.downloadUrl || '', size: p.fileSize || p.size, kind: 'profile' })),
-    ]
-      .filter((x) => x.url)
-      .map((x) => ({ ...x, kind: x.kind || 'model' }));
-    if (!links.length) {
-      throw new Error(`站点没有公开文件直链，打印配置要登录才能取（${value.msg || value.code}）：先在浏览器登录 Snapmaker`);
-    }
-    return links;
-  },
-};
-
-
-// MakerOnline（纵维立方）：Nuxt 2，页面里 window.__NUXT__ 是 IIFE 打包的数据，直接在 vm 里求值
+// MakerOnline（纵维立方）：Nuxt 2，页面里 window.__NUXT__ 是 IIFE 打包的数据。
+// 绝不在服务端求值它——那等于让站点在我们的进程里执行任意代码（实测能拿到 process）。
+// 改成在浏览器页内读出模型那一段，只把 JSON 结果传回来。
 const makeronline = {
   async meta(id, pageUrl) {
-    const canonical = pageUrl.split('#')[0];
-    const { text: html } = await httpGet(canonical);
-    const i = html.indexOf('window.__NUXT__=');
-    if (i < 0) throw new Error('页面里没有 __NUXT__（站点结构变了？）');
-    const j = html.indexOf('</script>', i);
-    const expr = html.slice(i + 'window.__NUXT__='.length, j).trim().replace(/;+$/, '');
-    const nuxt = vm.runInContext(`(${expr})`, vm.createContext({}), { timeout: 3000 });
-    const m = nuxt?.data?.[0]?.modelDetailData;
-    if (!m) throw new Error('__NUXT__ 里没有 modelDetailData');
+    const canonical = pageUrl;
+    const { value } = await evalInPage(canonical, () => {
+      const m = window.__NUXT__?.data?.[0]?.modelDetailData;
+      return m ? JSON.stringify(m) : null;
+    });
+    if (!value) throw new Error('__NUXT__ 里没有 modelDetailData（站点结构变了，或没登录）');
+    const m = JSON.parse(value);
 
     const profile = (m.print_profiles || [])[0] || {};
     const rgb = (v) =>
@@ -563,6 +447,9 @@ const makeronline = {
       filaments: (f.materials || []).map((x) => ({ type: x.material_type, color: rgb(x.paint_color), usedG: x.filament_used_g })),
     }));
     const downloadName = profile.download?.file_name || `${m.title}.3mf`;
+    // 打印配置带 is_author（页面上那个「Designer」徽标）：别人传的配置不算作者件，不参与比 hash
+    const profileByAuthor = profile.is_author !== false;
+    const fileOrigin = profileByAuthor ? 'author' : 'other';
 
     const site = /makeronline\.cn/i.test(canonical) ? 'cn' : 'com';
     const rawFiles = (m.files || []).map((f) => ({
@@ -570,6 +457,7 @@ const makeronline = {
       size: f.file_size,
       format: (String(f.file_name || '').match(/\.(\w+)$/) || [, ''])[1].toLowerCase(),
       private: true,
+      origin: 'author',
     }));
 
     return {
@@ -623,11 +511,13 @@ const makeronline = {
             filaments: (profile.materials_label || []).map((x) => ({ type: x.material_type, color: rgb(x.paint_color), usedG: x.filament_used_g })),
             thumbnail: profile.main_thumb_image || '',
             isDefault: true,
+            isAuthor: profileByAuthor,
+            creatorUid: profile.user_id ?? null,
             url: canonical,
           }]
         : [],
       files: profile.id
-        ? [{ name: downloadName, format: (downloadName.match(/\.(\w+)$/) || [])[1] || '3mf', size: profile.total_size }]
+        ? [{ name: downloadName, format: (downloadName.match(/\.(\w+)$/) || [])[1] || '3mf', size: profile.total_size, origin: fileOrigin }]
         : [],
       rawFiles,
       docs: (m.docs || []).map((d) => ({
@@ -650,14 +540,18 @@ const makeronline = {
       window.open = function (u) { if (u) got.push(String(u)); return null; };
       const btn = document.querySelector('.print-download-button button') ||
         [...document.querySelectorAll('button')].find((b) => /下载|Download/i.test(b.innerText || ''));
-      if (!btn) return { error: '页面上找不到下载按钮' };
-      btn.click();
-      await sleep(1600);
-      const all = [...document.querySelectorAll('.el-dialog button')].find((b) => /下载全部|Download all/i.test(b.innerText || ''));
-      if (all) { all.click(); await sleep(6000); }
-      HTMLAnchorElement.prototype.click = oc; window.open = ow;
+      if (!btn) { HTMLAnchorElement.prototype.click = oc; window.open = ow; return { error: '页面上找不到下载按钮' }; }
+      try {
+        btn.click();
+        await sleep(1600);
+        const all = [...document.querySelectorAll('.el-dialog button')].find((b) => /下载全部|Download all/i.test(b.innerText || ''));
+        if (all) { all.click(); await sleep(6000); }
+      } finally {
+        // 常驻页是共用的，抛错也必须把 monkeypatch 还回去，否则后面所有点击都被劫持
+        HTMLAnchorElement.prototype.click = oc; window.open = ow;
+      }
       const login = [...document.querySelectorAll('.el-dialog')].some((d) => /登录|Log in|Sign in/i.test(d.innerText || '') && d.offsetParent !== null);
-      return { urls: [...new Set(got)].filter((u) => /^https?:/.test(u)), loginRequired: login && got.length === 0, clicked: Boolean(all) };
+      return { urls: [...new Set(got)].filter((u) => /^https?:/.test(u)), loginRequired: login && got.length === 0 };
     })()`;
     const { value: res } = await evalInPage(model.sourceUrl, js, { wait: 6000 });
     if (res.error) throw new Error(res.error);
@@ -666,26 +560,41 @@ const makeronline = {
     }
     return res.urls.map((u, i) => {
       // 签名链接的 response-content-disposition 里带着原始文件名
-      const m = /filename=(?:UTF-8'')?([^&;]+)/i.exec(decodeURIComponent(u));
-      const name = m ? decodeURIComponent(m[1].replace(/\+/g, ' ')) : `${(model.files[0]?.name || 'model').replace(/\.\w+$/, '')}${i ? '-' + (i + 1) : ''}.3mf`;
+      const m = /filename=(?:UTF-8'')?([^&;]+)/i.exec(safeDecode(u));
+      const name = (m && safeDecode(m[1].replace(/\+/g, ' '))) || `${(model.files[0]?.name || 'model').replace(/\.\w+$/, '')}${i ? '-' + (i + 1) : ''}.3mf`;
       return { name, url: u, size: model.files[0]?.size, kind: 'profile' };
     });
   },
 };
 
-const ADAPTERS = { creality, makerworld, snapmaker, makeronline };
+// 还没搬进站点包的三个站（票 02–05 逐个搬走，搬完这张表就空了）
+const ADAPTERS = { creality, makerworld, makeronline };
 
 // ── 主流程 ──────────────────────────────────────────────────────
-const hit = matchPlatform(url);
+// 先问站点包（sites/index.mjs），包不认再退回旧适配器表
+const hit = sites.match(url) || matchPlatform(url);
 if (!hit) {
-  console.error('暂不支持的站点。目前支持：\n  space.snapmaker.cn / crealitycloud.cn / makerworld.com.cn');
+  console.error('暂不支持的站点。目前支持：\n  space.snapmaker.cn / crealitycloud.cn / makerworld.com.cn / makeronline.cn|com');
   process.exit(2);
 }
 
 const { name: platform, id } = hit;
-const adapter = ADAPTERS[platform];
-const model = await adapter.meta(id, url);
+const pack = sites.byName(platform);
+const adapter = pack || ADAPTERS[platform];
+progress({ phase: 'fetching', site: platform, id });
+const model = pack ? await pack.meta(hit.url) : await ADAPTERS[platform].meta(id, hit.url);
 model.fetchedAt = new Date().toISOString();
+progress({ phase: 'parsing', title: model.title });
+
+// 判重（ADR-0004）：同站标题+作者相同就是重复，下载前拦；跨站标题+作者只是「疑似」，
+// 要等下载完比作者件的 sha256 才算「确认」。同网址是同目录重抓，不算重复。
+const dupHit = await dup.check(model);
+if (dupHit?.same) {
+  await dup.record(platform, id, dupHit, { title: model.title, author: model.author, url: model.sourceUrl });
+  progress({ phase: 'duplicate', of: dupHit.of, by: 'meta' });
+  console.log(`\n${platform} · ${model.title}\n  跳过：同站已有 ${dupHit.of}（标题+作者相同）`);
+  await exit(0);
+}
 
 // 目录只认站点+id：标题改了也不会生第二个目录
 const dir = path.join(outRoot, `${platform}-${id}`);
@@ -723,21 +632,57 @@ if (model.print?.plateList?.length) {
   }
 }
 
+// 模型内每个文件之间歇 5–10 秒（AGENTS.md 限速的另一半：模型之间 60–120 秒在 tasks.mjs）。
+// 站点看到的是「一分钟一个模型 + 模型内慢慢下」，不是一个模型 48 个文件连珠炮。
+const fileGap = () => new Promise((r) => setTimeout(r, 5000 + Math.random() * 5000));
+
 // 文件落地
 const saved = [];
+let linkErr = '';
 if (wantFiles) {
   try {
     const links = await adapter.fileLinks(model);
+    progress({ phase: 'downloading', done: 0, total: links.length });
     for (const [i, f] of links.entries()) {
+      if (i > 0) await fileGap();
       const ext = (f.name.match(/\.(\w+)$/) || [, 'bin'])[1];
       const name = `${String(i + 1).padStart(2, '0')}-${slugify(f.name.replace(/\.\w+$/, ''))}.${ext}`;
-      const bytes = await download(f.url, path.join(filesDir, name));
-      saved.push({ name: f.name, path: `files/${name}`, bytes, kind: f.kind || 'model' });
-      console.log(`  ✓ ${f.name} (${(bytes / 1048576).toFixed(1)} MB)`);
+      // 单个文件失败不拖累其余：48 个 STL 的模型不能因为第 3 个挂了就全丢
+      try {
+        const { bytes, sha256 } = await download(f.url, path.join(filesDir, name), platform);
+        saved.push({ name: f.name, path: `files/${name}`, bytes, sha256, kind: f.kind || 'model', origin: f.origin || 'author' });
+        console.log(`  ✓ ${f.name} (${(bytes / 1048576).toFixed(1)} MB)`);
+      } catch (e) {
+        linkErr = e.message;
+        console.warn(`  ✗ ${f.name}：${e.message}`);
+      }
+      progress({ phase: 'downloading', done: i + 1, total: links.length, name: f.name });
     }
   } catch (e) {
+    linkErr = e.message;
     console.warn(`  文件下载失败：${e.message}`);
   }
+}
+
+// 跨站疑似：下载完比作者件的 sha256，撞上才算确认重复（同格式才可能撞，天然排除 stl 比 3mf）
+if (dupHit && !dupHit.same && saved.length && (await dup.confirm(dupHit.of, saved))) {
+  await dup.record(platform, id, { of: dupHit.of, by: 'hash' }, {
+    title: model.title,
+    author: model.author,
+    url: model.sourceUrl,
+    hashes: saved.map((f) => f.sha256),
+  });
+  progress({ phase: 'duplicate', of: dupHit.of, by: 'hash' });
+  console.log(`\n${platform} · ${model.title}\n  跳过：与 ${dupHit.of} 是同一个模型（作者件 sha256 相同）`);
+  await rm(dir, { recursive: true, force: true });
+  await exit(0);
+}
+
+// 一个文件都没下到时记下原因：控制台才能分清「要登录」「站点本来就不给」「解析坏了」
+if (wantFiles && !saved.length) {
+  const hasFiles = (model.files || []).length + (model.rawFiles || []).length > 0;
+  model.noFiles = /登录|403|unauthor|forbidden/i.test(linkErr) ? 'login' : hasFiles ? 'parse' : 'none';
+  progress({ phase: 'warning', msg: NO_FILES_TEXT[model.noFiles] });
 }
 
 // --no-files 重跑时不要把上一轮已下好的文件记录抹掉
@@ -747,19 +692,33 @@ if (!saved.length) {
     model.savedFiles = (prev.savedFiles || []).filter((f) => existsSync(path.join(dir, f.path)));
   } catch {}
 }
-if (saved.length) model.savedFiles = saved;
+if (saved.length) {
+  model.savedFiles = saved;
+  delete model.noFiles; // 这次下到了，上一次的「没下到」原因作废
+}
 model.savedFiles ||= [];
-if (!model.savedFiles.length && !(model.files || []).length) {
-  console.warn('  站点没有给文件直链（这类模型可能只能在站点里下）');
+
+// 跨站标题+作者撞上但 hash 没撞：记「疑似」，照常入库，页面上互相给链接
+if (dupHit && !dupHit.same) {
+  model.duplicateOf = { of: dupHit.of, by: 'meta' };
+  await dup.record(platform, id, dupHit, {
+    title: model.title,
+    author: model.author,
+    url: model.sourceUrl,
+    hashes: saved.map((f) => f.sha256),
+  });
+  progress({ phase: 'warning', msg: `疑似与 ${dupHit.of} 是同一模型（标题+作者相同，文件 hash 不同）` });
 }
 
 model.dir = path.basename(dir);
 model.autoTags = autoTags(platform, { downloads: model.stats?.downloads, picked: model.picked });
-await writeFile(path.join(dir, 'model.json'), JSON.stringify(model, null, 2));
+await writeJson(path.join(dir, 'model.json'), model);
+progress({ phase: 'done', dir: model.dir, title: model.title, files: model.savedFiles.length });
 
 console.log(`\n${platform} · ${model.title}`);
 console.log(`  目录  ${path.relative(ROOT, dir)}`);
 console.log(`  文件  ${model.savedFiles.length} 个（本次新下 ${saved.length}）· 图片 ${localImages.length} 张`);
 if (model.print) console.log(`  打印  ${model.print.timeText} · ${model.print.weightG} g · ${model.print.plates} 盘 · ${model.print.filaments.length} 种耗材`);
 if (model.autoTags?.length) console.log(`  标签  ${model.autoTags.join(' / ')}`);
-if (!browserConnected()) console.log('  ⚠ 浏览器扩展没连上，走的是无头兜底：需要登录的站点下不了文件');
+if (!browserConnected()) console.log('  ⚠ 浏览器没连上：需要登录态的站点下不了文件');
+await exit(0);

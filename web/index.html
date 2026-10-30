@@ -7,41 +7,52 @@
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header class="bar">
-  <div class="brand">
+<header class="topbar">
+  <a class="brand" href="#/">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2.6 20.4 7v10L12 21.4 3.6 17V7L12 2.6Z"/><path d="M3.6 7 12 11.4 20.4 7M12 11.4v10"/></svg>
     <strong>我的模型库</strong>
-    <span>创想云 · MakerWorld · Snapmaker · MakerOnline 一个地方收</span>
-  </div>
+  </a>
   <form class="add" id="add-form">
-    <input id="add-url" type="url" placeholder="粘贴模型页网址，回车收进来" autocomplete="off" spellcheck="false">
+    <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14" stroke-linecap="round"/></svg>
+    <input id="add-url" type="url" placeholder="粘贴模型页网址，回车收进来（创想云 / MakerWorld / Snapmaker / MakerOnline）" autocomplete="off" spellcheck="false">
     <button type="submit" id="add-btn">添加</button>
   </form>
+  <span class="topnote">四站一库</span>
+  <a class="toplink" href="/console">控制台</a>
 </header>
 
 <div class="status" id="status" hidden><span class="spin"></span><span id="status-text">抓取中…</span></div>
 
 <main id="list-view">
-  <div class="tools">
-    <input id="q" type="search" placeholder="搜标题 / 作者 / 标签">
-    <div class="chips" id="site-chips"></div>
-    <div class="chips" id="tag-chips"></div>
-    <select id="format">
-      <option value="">全部格式</option>
-      <option value="3mf">3MF</option>
-      <option value="stl">STL</option>
-    </select>
-    <select id="sort">
-      <option value="new">最新加入</option>
-      <option value="title">按标题</option>
-      <option value="time">按时长</option>
-      <option value="weight">按克重</option>
-    </select>
-    <span class="count" id="count"></span>
-  </div>
-  <section class="grid" id="grid"></section>
-  <div class="empty" id="empty" hidden>
-    <p>库里还没有模型。</p>
-    <p class="hint">把创想云 / MakerWorld / Snapmaker 的模型页网址粘到上面，回车就收进来。</p>
+  <div class="layout">
+    <aside id="side"></aside>
+    <div class="content">
+      <div class="pills" id="pills"></div>
+      <section class="spot" id="hero" hidden></section>
+      <div class="sec-head">
+        <h2>最新加入</h2>
+        <div class="sec-tools">
+          <input id="q" type="search" placeholder="搜标题 / 作者 / 标签">
+          <select id="format">
+            <option value="">全部格式</option>
+            <option value="3mf">3MF</option>
+            <option value="stl">STL</option>
+          </select>
+          <select id="sort">
+            <option value="new">最新加入</option>
+            <option value="title">按标题</option>
+            <option value="time">按时长</option>
+            <option value="weight">按克重</option>
+          </select>
+          <span class="count" id="count"></span>
+        </div>
+      </div>
+      <section class="grid" id="grid"></section>
+      <div class="empty" id="empty" hidden>
+        <p>库里还没有模型。</p>
+        <p class="hint">把创想云 / MakerWorld / Snapmaker 的模型页网址粘到上面，回车就收进来。</p>
+      </div>
+    </div>
   </div>
 </main>
 

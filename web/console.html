@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>控制台 · 我的模型库</title>
+<link rel="stylesheet" href="/console.css">
+</head>
+<body>
+<header class="topbar">
+  <a class="brand" href="/console">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2.6 20.4 7v10L12 21.4 3.6 17V7L12 2.6Z"/><path d="M3.6 7 12 11.4 20.4 7M12 11.4v10"/></svg>
+    <strong>控制台</strong>
+  </a>
+  <div class="topnav">
+    <a class="btn" href="/">模型库</a>
+    <button class="btn" id="refresh" type="button">刷新</button>
+    <button class="btn" id="side-toggle" type="button" aria-expanded="true" aria-controls="side" title="收起导航">☰</button>
+  </div>
+</header>
+
+<div class="shell" id="shell">
+  <aside class="side" id="side">
+    <nav class="nav">
+      <a class="nav-item" href="#dash" data-page="dash">数据大屏</a>
+      <a class="nav-item" href="#tasks" data-page="tasks">抓取任务</a>
+      <a class="nav-item" href="#subs" data-page="subs">订阅任务</a>
+      <a class="nav-item" href="#logs" data-page="logs">运行日志</a>
+      <a class="nav-item" href="#sites" data-page="sites">站点包</a>
+      <a class="nav-item" href="#settings" data-page="settings">设置</a>
+    </nav>
+    <div class="side-foot muted small" id="side-foot"></div>
+  </aside>
+
+  <main class="pane">
+    <!-- 数据大屏 -->
+    <section class="page" id="page-dash" hidden>
+      <div class="page-head">
+        <h1>数据大屏</h1>
+        <span class="muted small" id="wb-at"></span>
+      </div>
+      <div class="err" id="wb-err" hidden></div>
+      <div class="stats" id="wb"><p class="muted small">加载中…</p></div>
+    </section>
+
+    <!-- 抓取任务 -->
+    <section class="page" id="page-tasks" hidden>
+      <div class="page-head">
+        <h1>抓取任务</h1>
+        <div class="right">
+          <span class="tag" id="queue-state">运行中</span>
+          <button class="btn sm" id="queue-toggle" type="button">暂停抓取</button>
+          <span class="muted small" id="task-note">5 秒自动刷新</span>
+        </div>
+      </div>
+      <div class="err" id="task-err" hidden></div>
+      <div class="tablewrap">
+        <table>
+          <thead><tr><th>时间</th><th>站点</th><th>标题</th><th>进度</th><th>来源</th><th>状态</th><th>耗时</th></tr></thead>
+          <tbody id="task-rows"><tr><td colspan="7" class="muted small">加载中…</td></tr></tbody>
+        </table>
+      </div>
+      <p class="muted small">点一行展开详情（日志、错误、原始链接、操作）。</p>
+    </section>
+
+    <!-- 订阅任务 -->
+    <section class="page" id="page-subs" hidden>
+      <div class="page-head">
+        <h1>订阅任务</h1>
+        <div class="right">
+          <span class="note" id="sub-note"></span>
+          <button class="btn sm" id="sub-stop-all" type="button">全部停止</button>
+          <button class="btn sm primary" id="sub-new" type="button">新建订阅</button>
+        </div>
+      </div>
+      <div class="err" id="subs-err" hidden></div>
+      <div class="split">
+        <div class="col-list">
+          <div id="sub-list"><p class="muted small">加载中…</p></div>
+        </div>
+        <div class="col-detail" id="sub-detail">
+          <p class="muted small">左边点一条订阅看详情，或点右上角新建。</p>
+        </div>
+      </div>
+
+      <form class="form" id="sub-form" hidden>
+        <input type="hidden" id="f-id" name="id">
+        <div class="field">
+          <label for="f-name">名称</label>
+          <input id="f-name" name="name" type="text" placeholder="如：可动关节">
+        </div>
+        <div class="field wide">
+          <label for="f-kw">关键字（逗号分隔）</label>
+          <input id="f-kw" name="keywords" type="text" placeholder="如：头盔, 可动关节, 收纳盒">
+        </div>
+        <div class="field wide">
+          <label for="f-users">用户主页（每行一个链接，订阅该作者的全部模型）</label>
+          <textarea id="f-users" name="users" rows="2" placeholder="https://makerworld.com.cn/zh/@youngzhen&#10;https://space.snapmaker.cn/zh/creator/11307"></textarea>
+        </div>
+        <div class="field wide">
+          <label>站点</label>
+          <div class="checks">
+            <label><input type="checkbox" name="site" value="creality" checked>创想云</label>
+            <label><input type="checkbox" name="site" value="makerworld" checked>MakerWorld</label>
+            <label><input type="checkbox" name="site" value="snapmaker" checked>Snapmaker</label>
+            <label><input type="checkbox" name="site" value="makeronline" checked>MakerOnline</label>
+          </div>
+        </div>
+        <div class="field">
+          <label for="f-likes">点赞数 ≥</label>
+          <input id="f-likes" name="minLikes" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="field">
+          <label for="f-dl">下载量 ≥</label>
+          <input id="f-dl" name="minDownloads" type="number" min="0" step="1" value="0">
+        </div>
+        <div class="field">
+          <label for="f-sort">排序</label>
+          <select id="f-sort" name="sort">
+            <option value="downloads">按下载 + 点赞</option>
+            <option value="newest">按发布时间</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="f-pages">每个关键字/作者翻几页</label>
+          <input id="f-pages" name="pageLimit" type="number" min="1" max="10" step="1" value="1">
+        </div>
+        <div class="field">
+          <label for="f-round">每轮最多入库</label>
+          <input id="f-round" name="roundLimit" type="number" min="1" max="200" step="1" value="50">
+        </div>
+        <div class="field">
+          <label for="f-int">每几小时跑一次</label>
+          <input id="f-int" name="intervalHours" type="number" min="0.5" step="0.5" value="8">
+        </div>
+        <div class="field">
+          <label>门槛条件</label>
+          <div class="checks">
+            <label><input type="checkbox" name="pickedOnly">只要精选</label>
+            <label><input type="checkbox" name="excludeInLibrary" checked>排除已入库</label>
+          </div>
+        </div>
+        <div class="field">
+          <label>启用</label>
+          <label class="switch"><input type="checkbox" name="enabled" checked><span>到点自动跑</span></label>
+        </div>
+        <div class="form-foot">
+          <button class="btn primary" type="submit" id="sub-submit">新建订阅</button>
+          <button class="btn" type="button" id="sub-cancel">取消</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 运行日志 -->
+    <section class="page" id="page-logs" hidden>
+      <div class="page-head">
+        <h1>运行日志</h1>
+        <div class="right"><span class="muted small" id="log-note"></span></div>
+      </div>
+      <div class="chips" id="log-chips">
+        <button class="chip on" type="button" data-type="all">全部</button>
+        <button class="chip" type="button" data-type="queue">抓取队列</button>
+        <button class="chip" type="button" data-type="subscribe">订阅命中</button>
+        <button class="chip" type="button" data-type="tag">智能标签</button>
+        <button class="chip" type="button" data-type="dup">判重</button>
+      </div>
+      <div class="err" id="log-err" hidden></div>
+      <div class="timeline" id="log-list"><p class="muted small">加载中…</p></div>
+    </section>
+
+    <!-- 站点包 -->
+    <section class="page" id="page-sites" hidden>
+      <div class="page-head">
+        <h1>站点包</h1>
+        <div class="right">
+          <span class="muted small" id="login-note"></span>
+          <button class="btn sm" id="login-recheck" type="button">重新检测登录态</button>
+        </div>
+      </div>
+      <div class="err" id="login-err" hidden></div>
+      <div class="sites" id="site-cards"><p class="muted small">加载中…</p></div>
+      <h3 class="sub-h">登录态</h3>
+      <div class="login-list" id="login-list"><p class="muted small">检测中…</p></div>
+    </section>
+
+    <!-- 设置 -->
+    <section class="page" id="page-settings" hidden>
+      <div class="page-head">
+        <h1>设置</h1>
+        <div class="right"><span class="muted small" id="llm-tags">标签池 — 个</span></div>
+      </div>
+      <div class="err" id="llm-err" hidden></div>
+      <h3 class="sub-h">大模型打标签</h3>
+      <div class="form">
+        <div class="field wide">
+          <label for="llm-base">baseUrl</label>
+          <input id="llm-base" type="text" placeholder="https://api.deepseek.com/v1" spellcheck="false">
+        </div>
+        <div class="field">
+          <label for="llm-key">apiKey</label>
+          <input id="llm-key" type="password" autocomplete="off" placeholder="已保存，留空不改">
+        </div>
+        <div class="field">
+          <label for="llm-model">model</label>
+          <input id="llm-model" type="text" list="llm-model-list" placeholder="deepseek-chat" spellcheck="false">
+          <datalist id="llm-model-list"></datalist>
+        </div>
+        <div class="form-foot">
+          <button class="btn primary" id="llm-save" type="button">保存</button>
+          <button class="btn" id="llm-models" type="button">获取模型列表</button>
+          <span class="note" id="llm-note"></span>
+        </div>
+      </div>
+      <h3 class="sub-h">待确认的新词</h3>
+      <div id="llm-pending"></div>
+    </section>
+  </main>
+</div>
+
+<script src="/console.js"></script>
+</body>
+</html>

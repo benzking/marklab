@@ -1,4 +1,4 @@
-// 模型库前端：一个列表 + 一个详情，全靠 /api/models 返回的 model.json 渲染。
+// 模型库前端：一个列表 + 一个详情。列表用 /api/models 的卡片字段，点开详情再拉 /api/model 的完整数据。
 // 没有框架、没有构建，改完刷新就见效。
 
 const SITE = {
@@ -17,12 +17,64 @@ const ICON = {
   box: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M8 1.8 14 5v6l-6 3.2L2 11V5l6-3.2Z" stroke-linejoin="round"/><path d="M2 5l6 3.2L14 5M8 8.2v6" stroke-linejoin="round"/></svg>',
   ruler: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M1.8 10.2 10.2 1.8l4 4-8.4 8.4-4-4Z" stroke-linejoin="round"/><path d="M4.6 7.4l1.6 1.6M6.8 5.2l1.6 1.6M9 3l1.6 1.6" stroke-linecap="round"/></svg>',
   download: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M8 2.4v7.2" stroke-linecap="round"/><path d="M4.8 6.8 8 10l3.2-3.2" stroke-linejoin="round" stroke-linecap="round"/><path d="M2.8 12.6h10.4" stroke-linecap="round"/></svg>',
+  arrow: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.4 8h9.2M8.8 4.2 12.6 8l-3.8 3.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
+  grid: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.2" y="2.2" width="5.6" height="5.6" rx="1.4"/><rect x="10.2" y="2.2" width="5.6" height="5.6" rx="1.4"/><rect x="2.2" y="10.2" width="5.6" height="5.6" rx="1.4"/><rect x="10.2" y="10.2" width="5.6" height="5.6" rx="1.4"/></svg>',
+  folder: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 5.2c0-.8.6-1.4 1.4-1.4h3l1.6 1.8h6.4c.8 0 1.4.6 1.4 1.4v6.4c0 .8-.6 1.4-1.4 1.4H3.8c-.8 0-1.4-.6-1.4-1.4V5.2Z" stroke-linejoin="round"/></svg>',
 };
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
   String(s ?? '')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// 描述入库时已按白名单洗过（lib.mjs sanitize），这里再兜一层：库里的旧数据是旧黑名单洗的，
+// 不能只信入库结果。用 DOMParser 走一遍白名单，不认识的标签拆掉只留文字。
+const SAFE_TAGS = new Set([
+  'P', 'BR', 'DIV', 'SPAN', 'B', 'STRONG', 'I', 'EM', 'U', 'S', 'DEL', 'INS',
+  'SUB', 'SUP', 'SMALL', 'UL', 'OL', 'LI', 'H1', 'H2', 'H3', 'H4', 'H5', 'H6',
+  'BLOCKQUOTE', 'PRE', 'CODE', 'HR', 'A', 'IMG', 'FIGURE', 'FIGCAPTION',
+  'TABLE', 'THEAD', 'TBODY', 'TR', 'TD', 'TH',
+]);
+const SAFE_ATTRS = { A: ['href'], IMG: ['src', 'alt', 'width', 'height'] };
+const SAFE_URL = /^(https?:|mailto:|\/|#|data:image\/)/i;
+
+function safeHtml(html) {
+  const doc = new DOMParser().parseFromString(String(html || ''), 'text/html');
+  const clean = (node) => {
+    let child = node.firstChild;
+    while (child) {
+      const next = child.nextSibling;
+      if (child.nodeType === 1) {
+        const tag = child.tagName;
+        if (!SAFE_TAGS.has(tag)) {
+          const frag = document.createDocumentFragment();
+          while (child.firstChild) frag.appendChild(child.firstChild);
+          child.replaceWith(frag);
+          clean(node); // 拆出来的孩子也要过一遍
+          return;
+        }
+        const allowed = SAFE_ATTRS[tag] || [];
+        for (const attr of [...child.attributes]) {
+          const name = attr.name.toLowerCase();
+          const keep = name === 'title' || allowed.includes(name);
+          if (!keep || ((name === 'href' || name === 'src') && !SAFE_URL.test(attr.value.trim()))) {
+            child.removeAttribute(attr.name);
+          }
+        }
+        if (tag === 'A') {
+          child.setAttribute('target', '_blank');
+          child.setAttribute('rel', 'noopener noreferrer');
+        }
+        clean(child);
+      } else if (child.nodeType !== 3) {
+        child.remove(); // 注释、CDATA 之类
+      }
+      child = next;
+    }
+  };
+  clean(doc.body);
+  return doc.body.innerHTML;
+}
+
 const fmtG = (g) => (g == null || g === '' ? '' : `${Math.round(Number(g) * 10) / 10} g`);
 const fmtH = (sec) => {
   if (!sec) return '';
@@ -35,6 +87,13 @@ const fmtSize = (b) => {
   if (b >= 1 << 10) return `${Math.round(b / (1 << 10))} KB`;
   return `${b} B`;
 };
+const fmtN = (n) => {
+  const v = Number(n) || 0;
+  if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+  return String(v);
+};
+// 作者头像只存了外链，站外图片经常挂；用名字首字 + 稳定色相代替
+const avaHue = (s) => [...String(s || '?')].reduce((h, c) => (h * 31 + c.codePointAt(0)) % 360, 7);
 function readableText(hex) {
   const m = /^#?([0-9a-f]{6})$/i.exec(String(hex || ''));
   if (!m) return '#3c414d';
@@ -48,13 +107,62 @@ function readableText(hex) {
 }
 
 let models = [];
-const filters = { q: '', site: '', tag: '', format: '', sort: 'new' };
+let cats = [];
+const filters = { q: '', site: '', tag: '', format: '', sort: 'new', cat: '', sub: '' };
 
 // ── 数据 ───────────────────────────────────────────────────────
 async function load() {
-  const r = await fetch('/api/models');
+  const [r, c] = await Promise.all([fetch('/api/models'), fetch('/api/categories')]);
   models = await r.json();
+  cats = (await c.json()).level1 || [];
   renderChips();
+  renderSide();
+  renderHero();
+  render();
+}
+
+// 分类对照在服务端按原站分类名算好，model.cat = {l1, l2}（未匹配为 null）
+const inCat = (m, l1, l2) => (l1 === '_' ? !m.cat : !!m.cat && m.cat.l1 === l1 && (!l2 || m.cat.l2 === l2));
+
+function renderSide() {
+  const n = (l1, l2) => models.filter((m) => inCat(m, l1, l2)).length;
+  const html = [`<div class="item${filters.cat ? '' : ' on'}" data-l1="">${ICON.grid}<span>全部模型</span><em>${models.length}</em></div>`];
+  for (const l1 of cats) {
+    const total = n(l1.id);
+    if (!total) continue;
+    html.push(
+      `<div class="item${filters.cat === l1.id ? ' on' : ''}" data-l1="${esc(l1.id)}">${ICON.folder}<span>${esc(l1.name)}</span><em>${total}</em></div>`,
+    );
+    if (filters.cat !== l1.id) continue;
+    const subs = l1.children.filter((c) => n(l1.id, c.id));
+    if (!subs.length) continue;
+    html.push(
+      `<div class="subs"><span class="sub${filters.sub ? '' : ' on'}" data-l2="">全部</span>${subs
+        .map((c) => `<span class="sub${filters.sub === c.id ? ' on' : ''}" data-l2="${esc(c.id)}">${esc(c.name)}<em>${n(l1.id, c.id)}</em></span>`)
+        .join('')}</div>`,
+    );
+  }
+  if (models.some((m) => !m.cat)) html.push(`<div class="item${filters.cat === '_' ? ' on' : ''}" data-l1="_">${ICON.folder}<span>未分类</span><em>${n('_')}</em></div>`);
+  html.push(
+    `<div class="side-foot"><b>数据来源</b><span>创想云 · MakerWorld<br>Snapmaker · MakerOnline</span><span>${models.length} 个模型，文件存在本地</span></div>`,
+  );
+  $('#side').innerHTML = html.join('');
+}
+
+function onSideClick(e) {
+  const sub = e.target.closest('[data-l2]');
+  if (sub) {
+    filters.sub = sub.dataset.l2;
+    renderSide();
+    render();
+    return;
+  }
+  const l1 = e.target.closest('[data-l1]');
+  if (!l1) return;
+  const id = l1.dataset.l1;
+  filters.cat = filters.cat === id ? '' : id;
+  filters.sub = '';
+  renderSide();
   render();
 }
 
@@ -65,7 +173,7 @@ function siteOf(m) {
 function allTags() {
   const set = new Map();
   for (const m of models) {
-    for (const t of [...(m.autoTags || []), ...(m.tags || []), m.category].filter(Boolean)) {
+    for (const t of [...(m.autoTags || []), ...(m.tags || [])].filter(Boolean)) {
       set.set(t, (set.get(t) || 0) + 1);
     }
   }
@@ -75,6 +183,7 @@ function formatsOf(m) {
   return new Set((m.savedFiles || []).map((f) => (f.name.match(/\.(\w+)$/) || [, ''])[1].toLowerCase()).filter(Boolean));
 }
 function matches(m) {
+  if (filters.cat && !inCat(m, filters.cat, filters.sub)) return false;
   if (filters.site && m.platform !== filters.site) return false;
   if (filters.tag) {
     const tags = new Set([...(m.autoTags || []), ...(m.tags || []), m.category].filter(Boolean));
@@ -97,44 +206,92 @@ function sorted(list) {
 }
 
 // ── 列表 ───────────────────────────────────────────────────────
+// 一条可横向滚动的胶囊条：站点 + 标签，跟 MakerWorld 首页的分类条一个用法
 function renderChips() {
   const sites = [...new Set(models.map((m) => m.platform))];
-  $('#site-chips').innerHTML = [{ k: '', label: '全部站点' }, ...sites.map((s) => ({ k: s, label: siteOf({ platform: s }).label }))]
-    .map((x) => `<span class="chip${filters.site === x.k ? ' on' : ''}" data-site="${esc(x.k)}">${esc(x.label)}</span>`)
+  const sitePills = [{ k: '', label: '全部站点' }, ...sites.map((s) => ({ k: s, label: siteOf({ platform: s }).label }))]
+    .map((x) => `<button class="chip${filters.site === x.k ? ' on' : ''}" data-site="${esc(x.k)}">${esc(x.label)}</button>`)
     .join('');
 
   const tags = allTags().slice(0, 12);
-  $('#tag-chips').innerHTML = [{ k: '', label: '全部标签' }, ...tags.map(([t]) => ({ k: t, label: t }))]
+  const tagPills = [{ k: '', label: '全部标签' }, ...tags.map(([t]) => ({ k: t, label: t }))]
     .map((x) => {
       const cls = x.k === '热门' ? ' hot' : x.k === '精选' ? ' pick' : '';
-      return `<span class="chip${cls}${filters.tag === x.k ? ' on' : ''}" data-tag="${esc(x.k)}">${esc(x.label)}</span>`;
+      return `<button class="chip${cls}${filters.tag === x.k ? ' on' : ''}" data-tag="${esc(x.k)}">${esc(x.label)}</button>`;
     })
     .join('');
+
+  $('#pills').innerHTML = `${sitePills}<i class="sep"></i>${tagPills}`;
 }
 
 function card(m) {
   const s = siteOf(m);
-  const cover = (m.localImages && m.localImages[0]) || (m.images && m.images[0]) || '';
-  const tags = [...(m.autoTags || []), m.category].filter(Boolean);
-  const specs = [
-    m.print?.timeText ? `${ICON.clock}${esc(m.print.timeText)}` : '',
-    m.print?.weightG ? `${ICON.weight}${esc(fmtG(m.print.weightG))}` : '',
-    m.print?.plates ? `${ICON.plate}${m.print.plates} 盘` : '',
-  ].filter(Boolean);
+  const cover = m.cover || ''; // 列表只带一张封面，详情页再拉全套图
+  const fmts = [...formatsOf(m)].map((f) => f.toUpperCase());
   const nFiles = (m.savedFiles || []).length;
-  return `<a class="card" href="#m=${encodeURIComponent(m.dir)}">
-    <div class="cover">${cover ? `<img src="/library/${esc(m.dir)}/${esc(cover)}" alt="" loading="lazy">` : ''}
-      <span class="site" style="background:${s.color}">${esc(s.label)}</span></div>
+  const spec = [
+    m.print?.timeText,
+    m.print?.weightG ? fmtG(m.print.weightG) : '',
+    m.print?.plates ? `${m.print.plates} 盘` : '',
+    !m.print && nFiles ? `${nFiles} 个文件` : '',
+  ].filter(Boolean).join(' · ');
+  const ava = `<span class="ava" style="--a:${avaHue(m.author)}">${esc(String(m.author || '?').slice(0, 1))}</span>`;
+  return `<a class="card" href="#m=${encodeURIComponent(m.dir)}" title="${esc(m.title)}">
+    <div class="cover">${cover ? `<img src="${cover.startsWith('http') ? esc(cover) : `/library/${esc(m.dir)}/${esc(cover)}`}" alt="" loading="lazy">` : ''}
+      <span class="site" style="--c:${s.color}"><i></i>${esc(s.label)}</span>
+      ${fmts.length ? `<span class="fmt">${esc(fmts.join(' / '))}</span>` : ''}</div>
     <div class="body">
       <div class="title">${esc(m.title)}</div>
-      <div class="sub">${esc(m.author || '未知作者')}</div>
-      ${tags.length ? `<div class="badges">${tags
-        .map((t) => `<span class="tag${t === '热门' ? ' hot' : t === '精选' ? ' pick' : ''}">${esc(t)}</span>`)
-        .join('')}</div>` : ''}
-      <div class="specs">${specs.map((x) => `<span>${x}</span>`).join('')}</div>
-      <div class="files-n">${nFiles ? `${nFiles} 个文件 · ${[...formatsOf(m)].map((f) => f.toUpperCase()).join(' / ')}` : '未下载文件'}</div>
+      ${spec ? `<div class="spec">${esc(spec)}</div>` : ''}
+      <div class="meta">${ava}<span class="aname">${esc(m.author || '未知作者')}</span>
+        ${m.stats?.downloads ? `<span class="stat">${ICON.download}${fmtN(m.stats.downloads)}</span>` : ''}
+        <span class="go">${ICON.arrow}</span></div>
     </div>
   </a>`;
+}
+
+// 首页头图：下载量最高的几个模型轮播 + 四站入口（对应 MakerWorld 的 banner + 探索更多）
+let heroTimer = 0;
+function renderHero() {
+  const pool = models
+    .filter((m) => m.cover && (m.cover.startsWith('img/') || m.cover.startsWith('http')))
+    .sort((a, b) => (b.stats?.downloads || 0) - (a.stats?.downloads || 0))
+    .slice(0, 5);
+  if (!pool.length) return;
+  const slides = pool
+    .map(
+      (m, i) => `<a class="slide${i ? '' : ' on'}" href="#m=${encodeURIComponent(m.dir)}">
+      <img src="${m.cover.startsWith('http') ? esc(m.cover) : `/library/${esc(m.dir)}/${esc(m.cover)}`}" alt="" ${i ? 'loading="lazy"' : ''}>
+      <span class="cap"><b>${esc(m.title)}</b><span>${esc(siteOf(m).label)} · ${fmtN(m.stats?.downloads)} 次下载 · ${esc(
+        m.author || '未知作者',
+      )}</span></span></a>`,
+    )
+    .join('');
+  const tiles = [...new Set(models.map((m) => m.platform))]
+    .map((p) => {
+      const s = siteOf({ platform: p });
+      return `<button class="tile" data-site="${esc(p)}" style="--c:${s.color}"><b>${esc(s.label)}</b><span>${
+        models.filter((m) => m.platform === p).length
+      } 个模型</span></button>`;
+    })
+    .join('');
+  const el = $('#hero');
+  el.hidden = false;
+  el.innerHTML = `<div class="banner">${slides}<div class="dots">${pool.map((_, i) => `<i${i ? '' : ' class="on"'} data-i="${i}"></i>`).join('')}</div></div>
+    <div class="explore"><h3>探索更多</h3><div class="tiles">${tiles}</div></div>`;
+
+  let i = 0;
+  const go = (k) => {
+    i = (k + pool.length) % pool.length;
+    el.querySelectorAll('.slide').forEach((n, j) => n.classList.toggle('on', j === i));
+    el.querySelectorAll('.dots i').forEach((n, j) => n.classList.toggle('on', j === i));
+  };
+  el.querySelector('.dots').addEventListener('click', (e) => {
+    const d = e.target.closest('[data-i]');
+    if (d) go(Number(d.dataset.i));
+  });
+  clearInterval(heroTimer);
+  heroTimer = setInterval(() => go(i + 1), 5000);
 }
 
 function render() {
@@ -172,20 +329,20 @@ function detail(m) {
   <div class="dgrid">
     <div>
       <section class="hero">
-        ${imgs[0] ? `<img id="hero" src="${esc(imgs[0])}" alt="">` : ''}
+        ${imgs[0] ? `<img class="dhero" src="${esc(imgs[0])}" alt="">` : ''}
         ${imgs.length > 1 ? `<div class="thumbs">${imgs
           .map((src, i) => `<img src="${esc(src)}" data-src="${esc(src)}" class="${i === 0 ? 'on' : ''}" alt="">`)
           .join('')}</div>` : ''}
       </section>
       <section class="panel"><h2>模型介绍</h2>
         ${m.translated ? '<div class="transnote">内容由站点自动翻译</div>' : ''}
-        <div class="detail">${m.description || '<span class="sub">原页面没有介绍正文</span>'}</div>
+        <div class="detail">${m.description ? safeHtml(m.description) : '<span class="sub">原页面没有介绍正文</span>'}</div>
       </section>
     </div>
     <aside>
       <section class="panel">
         <h1 class="dt">${esc(m.title)}</h1>
-        <div class="author">${m.authorAvatar ? `<img src="${esc(m.authorAvatar)}" alt="">` : ''}<span>${esc(m.author || '未知作者')}</span></div>
+        <div class="author"><span class="ava" style="--a:${avaHue(m.author)}">${esc(String(m.author || '?').slice(0, 1))}</span><span>${esc(m.author || '未知作者')}</span></div>
         ${[...(m.autoTags || []), m.category].filter(Boolean).length
           ? `<div class="badges" style="margin-top:12px">${[...(m.autoTags || []), m.category]
               .filter(Boolean)
@@ -252,6 +409,16 @@ function detail(m) {
           : ''}
         <div id="file-preview" class="fpreview"><span class="sub">选一个文件看内容…</span></div>
         <div class="fdload" id="fdload"></div>
+        ${(m.sameModels || []).length
+          ? `<div class="same"><h3>同模型链接</h3>${m.sameModels
+              .map((s) => {
+                const label = `${s.by === 'hash' ? '确认重复' : '疑似重复'}${s.title ? ' · ' + esc(s.title) : ''}`;
+                return s.dir
+                  ? `<a href="#m=${esc(s.dir)}">${label} · 库里已有</a>`
+                  : `<a href="${esc(s.url || m.sourceUrl)}" target="_blank" rel="noreferrer">${label} · 原帖 ↗</a>`;
+              })
+              .join('')}</div>`
+          : ''}
         <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
           <a class="btn-ghost" href="${esc(m.sourceUrl)}" target="_blank" rel="noreferrer">原页面 ↗</a>
           <button class="btn-ghost" data-refetch="${esc(m.dir)}">重新抓取</button>
@@ -268,15 +435,28 @@ async function showDetail(dir) {
     location.hash = '';
     return;
   }
+  // 列表只拿卡片字段，详情要的 description/plateList/filaments 在这里补一次，补完就不再拉
+  if (!m.full) {
+    try {
+      const r = await fetch(`/api/model?dir=${encodeURIComponent(dir)}`);
+      const full = await r.json();
+      if (full && !full.error) {
+        Object.assign(m, full);
+        m.full = true;
+      }
+    } catch {}
+  }
   $('#list-view').hidden = true;
   $('#detail-view').hidden = false;
   $('#detail-view').innerHTML = detail(m);
   window.scrollTo(0, 0);
   wireFilePicker(m);
   wireProfileSwitch(m);
+  wireMachineFilter();
   document.querySelectorAll('#detail-view .thumbs img').forEach((t) => {
     t.addEventListener('click', () => {
-      $('#hero').src = t.dataset.src;
+      const hero = document.querySelector('#detail-view img.dhero');
+      if (hero) hero.src = t.dataset.src;
       document.querySelectorAll('#detail-view .thumbs img').forEach((x) => x.classList.remove('on'));
       t.classList.add('on');
     });
@@ -294,9 +474,24 @@ function setStatus(text, busy) {
   el.innerHTML = `${busy ? '<span class="spin"></span>' : ''}<span id="status-text">${esc(text)}</span>`;
 }
 
+// 轮询某个任务直到终态（done/duplicate/failed/interrupted/stopped），超时返回 false
+async function waitTask(taskId, ms) {
+  const until = Date.now() + ms;
+  const end = new Set(['done', 'duplicate', 'failed', 'interrupted', 'stopped']);
+  while (Date.now() < until) {
+    const r = await fetch('/api/console/tasks');
+    const j = await r.json();
+    const list = Array.isArray(j) ? j : j.tasks || [];
+    const t = list.find((x) => x.id === taskId);
+    if (t && end.has(t.phase)) return t.phase === 'done' || t.phase === 'duplicate';
+    await new Promise((r2) => setTimeout(r2, 3000));
+  }
+  return false;
+}
+
 async function addModel(url) {
   $('#add-btn').disabled = true;
-  setStatus('抓取中…（要下载文件的话需要浏览器扩展连着）', true);
+  setStatus('已收到，排队中…（抓取要排限速闸门，可能几分钟，进度看控制台）', true);
   try {
     const r = await fetch('/api/grab', {
       method: 'POST',
@@ -304,10 +499,12 @@ async function addModel(url) {
       body: JSON.stringify({ url }),
     });
     const j = await r.json();
-    setStatus(j.ok ? '已加入模型库' : `没抓成：\n${j.log || j.error || ''}`.slice(0, 1200), false);
-    if (j.ok) {
+    // 202 = 已入队；等它跑完再刷列表
+    if (r.status === 202) {
       $('#add-url').value = '';
-      await load();
+      setStatus('已入队，抓完自动进库（速度受限速闸门限制）', false);
+    } else {
+      setStatus(`没抓成：\n${j.error || ''}`.slice(0, 1200), false);
     }
   } catch (e) {
     setStatus(`请求失败：${e.message}`, false);
@@ -319,14 +516,20 @@ async function addModel(url) {
 async function refetch(dir) {
   const m = models.find((x) => x.dir === dir);
   if (!m) return;
-  setStatus('重新抓取中…', true);
+  setStatus('已收到，排队补抓中…', true);
   const r = await fetch('/api/files', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify({ dir }),
   });
   const j = await r.json();
-  setStatus(j.ok ? '已更新' : `失败：\n${j.log || j.error || ''}`.slice(0, 1200), false);
+  if (r.status !== 202) {
+    setStatus(`失败：\n${j.error || ''}`.slice(0, 1200), false);
+    return;
+  }
+  // 轮询任务，done 后刷新详情
+  const done = await waitTask(j.taskId, 5 * 60 * 1000);
+  setStatus(done ? '已更新' : '还在排队，稍后刷一下', false);
   await load();
   if (location.hash.startsWith('#m=')) showDetail(dir);
 }
@@ -360,6 +563,7 @@ $('#sort').addEventListener('change', (e) => {
   filters.sort = e.target.value;
   render();
 });
+$('#side').addEventListener('click', onSideClick);
 document.addEventListener('click', (e) => {
   const site = e.target.closest('[data-site]');
   if (site) {
@@ -472,10 +676,12 @@ function renderPreview(m, fileName, info) {
 
 // ── 打印配置列表（创想云 3mf 版）＋悬浮窗 ──────────────────────
 function profilesCard(m) {
+  const all = [...new Set(m.profiles.flatMap((p) => p.machines || []))].sort();
+  const pick = localStorage.getItem('machine') || '';
   const rows = m.profiles
     .map((p, i) => {
       const on = p.id === m.activeProfileId || (!m.activeProfileId && i === 0);
-      return `<div class="prow2${on ? ' on' : ''}" data-profile="${esc(p.id)}">
+      return `<div class="prow2${on ? ' on' : ''}" data-profile="${esc(p.id)}" data-machines="${esc((p.machines || []).join('|'))}">
         <div class="pthumb">${p.thumbnail ? `<img src="${esc(p.thumbnail)}" alt="" loading="lazy">` : ''}</div>
         <div class="pinfo">
           <div class="pname">${esc(p.name)}</div>
@@ -514,7 +720,11 @@ function profilesCard(m) {
     .join('');
 
   return `<section class="panel">
-    <h2>打印配置 · ${m.profiles.length}</h2>
+    <h2>打印配置 · ${m.profiles.length}${all.length
+      ? `<select id="mf" class="mfilter" aria-label="按机型筛选"><option value="">全部机型</option>${all
+          .map((n) => `<option value="${esc(n)}"${n === pick ? ' selected' : ''}>${esc(n)}</option>`)
+          .join('')}</select>`
+      : ''}</h2>
     <div class="plist">${rows}</div>
     <div class="sub" style="margin-top:8px">鼠标悬停看配置详情；3mf 需去站点下载</div>
   </section>`;
@@ -565,6 +775,23 @@ function docsCard(m) {
       })
       .join('')}
   </section>`;
+}
+
+// 机型筛选：只留能在选中机型上打的配置，选择记在 localStorage
+function wireMachineFilter() {
+  const sel = document.getElementById('mf');
+  if (!sel) return;
+  const apply = () => {
+    const want = sel.value;
+    document.querySelectorAll('.prow2[data-machines]').forEach((row) => {
+      row.hidden = Boolean(want) && !row.dataset.machines.split('|').includes(want);
+    });
+  };
+  sel.addEventListener('change', () => {
+    localStorage.setItem('machine', sel.value);
+    apply();
+  });
+  apply();
 }
 
 // 点配置行 → 只换打印盘面板

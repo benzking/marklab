@@ -1,0 +1,1378 @@
+{
+  "fetchedAt": "2026-10-30T08:38:33.498Z",
+  "sites": {
+    "creality": [
+      {
+        "id": 1731,
+        "name": "3D打印机",
+        "en": "3D Printers",
+        "children": [
+          {
+            "id": 1316,
+            "name": "3D打印机零件",
+            "en": "3D Printer Parts"
+          },
+          {
+            "id": 1904,
+            "name": "3D打印机配件",
+            "en": "3D Printer Accessories"
+          },
+          {
+            "id": 1645,
+            "name": "测试模型",
+            "en": "Test Models"
+          },
+          {
+            "id": 6006,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1670,
+        "name": "艺术与设计",
+        "en": "Art & Design",
+        "children": [
+          {
+            "id": 1662,
+            "name": "数字艺术",
+            "en": "Digital Art"
+          },
+          {
+            "id": 1584,
+            "name": "雕塑与艺术品",
+            "en": "Sculptures & Artworks"
+          },
+          {
+            "id": 1341,
+            "name": "徽章与钱币",
+            "en": "Badges & Coins"
+          },
+          {
+            "id": 1997,
+            "name": "工业设计与产品原型",
+            "en": "Industrial Design & Prototypes"
+          },
+          {
+            "id": 6005,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1809,
+        "name": "玩具与游戏",
+        "en": "Toys & Games",
+        "children": [
+          {
+            "id": 1575,
+            "name": "桌游与卡牌游戏",
+            "en": "Board Games & Card Games"
+          },
+          {
+            "id": 1141,
+            "name": "拼搭玩具",
+            "en": "Construction Toys"
+          },
+          {
+            "id": 1793,
+            "name": "游戏道具",
+            "en": "Game Props"
+          },
+          {
+            "id": 6007,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1519,
+        "name": "爱好与DIY",
+        "en": "Hobbies & DIY",
+        "children": [
+          {
+            "id": 1741,
+            "name": "电子与遥控",
+            "en": "Electronics & RC (Remote Control)"
+          },
+          {
+            "id": 1648,
+            "name": "机器人与机甲",
+            "en": "Robots & Mechs"
+          },
+          {
+            "id": 1194,
+            "name": "无人机与飞行器",
+            "en": "Drones & Aircraft"
+          },
+          {
+            "id": 1420,
+            "name": "声音与音响设备",
+            "en": "Sound & Audio Equipment"
+          },
+          {
+            "id": 1246,
+            "name": "体育与运动器材",
+            "en": "Sports & Exercise Equipment"
+          },
+          {
+            "id": 6004,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1010,
+        "name": "日用家居",
+        "en": "Household",
+        "children": [
+          {
+            "id": 1150,
+            "name": "家居装饰与摆件",
+            "en": "Home Decorations & Ornaments"
+          },
+          {
+            "id": 1096,
+            "name": "照明与灯具",
+            "en": "Lighting & Lamps"
+          },
+          {
+            "id": 1775,
+            "name": "家电配件",
+            "en": "Home Appliance Accessories"
+          },
+          {
+            "id": 1671,
+            "name": "工具与零配件",
+            "en": "Tools & Spare Parts"
+          },
+          {
+            "id": 1151,
+            "name": "宠物用品",
+            "en": "Pets"
+          },
+          {
+            "id": 6000,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1175,
+        "name": "时尚",
+        "en": "Fashion",
+        "children": [
+          {
+            "id": 1966,
+            "name": "Cosplay",
+            "en": "Cosplay"
+          },
+          {
+            "id": 1693,
+            "name": "珠宝首饰",
+            "en": "Jewelry & Accessories"
+          },
+          {
+            "id": 1598,
+            "name": "服装鞋帽",
+            "en": "Apparel, Shoes & Hats"
+          },
+          {
+            "id": 1647,
+            "name": "个人配饰",
+            "en": "Personal Accessories"
+          },
+          {
+            "id": 6002,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1501,
+        "name": "教育",
+        "en": "Education",
+        "children": [
+          {
+            "id": 1974,
+            "name": "文具与学习配件",
+            "en": "Stationery & Learning Tools"
+          },
+          {
+            "id": 1343,
+            "name": "教学辅助工具",
+            "en": "Educational Aids"
+          },
+          {
+            "id": 6003,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1952,
+        "name": "微缩模型",
+        "en": "Miniatures",
+        "children": [
+          {
+            "id": 1025,
+            "name": "角色与怪物",
+            "en": "Characters & Creatures"
+          },
+          {
+            "id": 1888,
+            "name": "微型游戏与配件",
+            "en": "Miniature Games & Accessories"
+          },
+          {
+            "id": 1846,
+            "name": "道具与地形",
+            "en": "Props & Terrain"
+          },
+          {
+            "id": 1982,
+            "name": "车辆与机械",
+            "en": "Vehicles & Machinery"
+          },
+          {
+            "id": 6008,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 1160,
+        "name": "医疗与健康",
+        "en": "Medical & Health",
+        "children": [
+          {
+            "id": 1192,
+            "name": "医疗与健康器具",
+            "en": "Medical & Health Equipment"
+          },
+          {
+            "id": 1765,
+            "name": "个人护理设备",
+            "en": "Personal Care Devices"
+          },
+          {
+            "id": 6001,
+            "name": "其他",
+            "en": "Other"
+          }
+        ]
+      },
+      {
+        "id": 6012,
+        "name": "MakeNow",
+        "en": "MakeNow",
+        "children": [
+          {
+            "id": 6014,
+            "name": "浮雕画印",
+            "en": "MagicRelief"
+          },
+          {
+            "id": 6010,
+            "name": "小小的我",
+            "en": "CubeMe"
+          },
+          {
+            "id": 6013,
+            "name": "拍立造",
+            "en": "SnapForm"
+          },
+          {
+            "id": 6011,
+            "name": "标牌生成器",
+            "en": "SignForge"
+          }
+        ]
+      }
+    ],
+    "snapmaker": [
+      {
+        "id": 108,
+        "name": "家居",
+        "children": [
+          {
+            "id": 139,
+            "name": "装饰"
+          },
+          {
+            "id": 140,
+            "name": "节日"
+          },
+          {
+            "id": 143,
+            "name": "桌面布置"
+          },
+          {
+            "id": 142,
+            "name": "家具照明"
+          },
+          {
+            "id": 141,
+            "name": "收纳整理"
+          },
+          {
+            "id": 144,
+            "name": "浴室用品"
+          },
+          {
+            "id": 146,
+            "name": "园艺用品"
+          },
+          {
+            "id": 145,
+            "name": "厨房用品"
+          },
+          {
+            "id": 147,
+            "name": "宠物用品"
+          },
+          {
+            "id": 184,
+            "name": "其他家居模型"
+          }
+        ]
+      },
+      {
+        "id": 112,
+        "name": "玩具与游戏",
+        "children": [
+          {
+            "id": 167,
+            "name": "可动玩具"
+          },
+          {
+            "id": 168,
+            "name": "解压玩具"
+          },
+          {
+            "id": 171,
+            "name": "角色"
+          },
+          {
+            "id": 174,
+            "name": "载具与场景玩具"
+          },
+          {
+            "id": 169,
+            "name": "拼图"
+          },
+          {
+            "id": 170,
+            "name": "拼装玩具"
+          },
+          {
+            "id": 172,
+            "name": "桌游"
+          },
+          {
+            "id": 173,
+            "name": "户外玩具"
+          },
+          {
+            "id": 175,
+            "name": "其他玩具与游戏"
+          }
+        ]
+      },
+      {
+        "id": 109,
+        "name": "爱好与 DIY",
+        "children": [
+          {
+            "id": 148,
+            "name": "电子"
+          },
+          {
+            "id": 149,
+            "name": "机器人"
+          },
+          {
+            "id": 152,
+            "name": "音乐"
+          },
+          {
+            "id": 153,
+            "name": "车用配件"
+          },
+          {
+            "id": 154,
+            "name": "户外运动"
+          },
+          {
+            "id": 155,
+            "name": "其他爱好与 DIY"
+          }
+        ]
+      },
+      {
+        "id": 104,
+        "name": "艺术",
+        "children": [
+          {
+            "id": 119,
+            "name": "2D 艺术"
+          },
+          {
+            "id": 120,
+            "name": "2.5D 艺术"
+          },
+          {
+            "id": 121,
+            "name": "雕塑"
+          },
+          {
+            "id": 183,
+            "name": "其他艺术模型"
+          }
+        ]
+      },
+      {
+        "id": 110,
+        "name": "微缩模型",
+        "children": [
+          {
+            "id": 157,
+            "name": "动物"
+          },
+          {
+            "id": 156,
+            "name": "人物"
+          },
+          {
+            "id": 159,
+            "name": "幻想生物"
+          },
+          {
+            "id": 158,
+            "name": "建筑"
+          },
+          {
+            "id": 160,
+            "name": "其他微缩模型"
+          }
+        ]
+      },
+      {
+        "id": 111,
+        "name": "工具",
+        "children": [
+          {
+            "id": 161,
+            "name": "手工工具"
+          },
+          {
+            "id": 162,
+            "name": "测量工具"
+          },
+          {
+            "id": 163,
+            "name": "工具收纳"
+          },
+          {
+            "id": 166,
+            "name": "其他工具"
+          }
+        ]
+      },
+      {
+        "id": 107,
+        "name": "时尚",
+        "children": [
+          {
+            "id": 135,
+            "name": "箱包"
+          },
+          {
+            "id": 182,
+            "name": "服装"
+          },
+          {
+            "id": 137,
+            "name": "鞋履"
+          },
+          {
+            "id": 134,
+            "name": "首饰"
+          },
+          {
+            "id": 138,
+            "name": "其他时尚模型"
+          }
+        ]
+      },
+      {
+        "id": 105,
+        "name": "角色扮演与道具",
+        "children": [
+          {
+            "id": 124,
+            "name": "武器道具"
+          },
+          {
+            "id": 122,
+            "name": "面具与头盔"
+          },
+          {
+            "id": 125,
+            "name": "其他角色扮演与道具"
+          }
+        ]
+      },
+      {
+        "id": 106,
+        "name": "教育",
+        "children": [
+          {
+            "id": 129,
+            "name": "生物学"
+          },
+          {
+            "id": 132,
+            "name": "工程学"
+          },
+          {
+            "id": 126,
+            "name": "数学"
+          },
+          {
+            "id": 127,
+            "name": "物理学"
+          },
+          {
+            "id": 133,
+            "name": "其他教育模型"
+          }
+        ]
+      },
+      {
+        "id": 103,
+        "name": "3D 打印机",
+        "children": [
+          {
+            "id": 114,
+            "name": "测试模型"
+          },
+          {
+            "id": 116,
+            "name": "配件收纳"
+          },
+          {
+            "id": 115,
+            "name": "耗材管理"
+          },
+          {
+            "id": 117,
+            "name": "外壳及外壳零件"
+          },
+          {
+            "id": 118,
+            "name": "其他 3D 打印机配件"
+          }
+        ]
+      }
+    ],
+    "makerworld": [
+      {
+        "id": 900,
+        "name": "3D打印机",
+        "slug": "3d-printer",
+        "children": [
+          {
+            "id": 901,
+            "name": "3D打印机配件",
+            "slug": "3d-printer-accessories"
+          },
+          {
+            "id": 902,
+            "name": "3D打印机零件",
+            "slug": "3d-printer-parts"
+          },
+          {
+            "id": 903,
+            "name": "测试模型",
+            "slug": "test-models"
+          }
+        ]
+      },
+      {
+        "id": 100,
+        "name": "艺术",
+        "slug": "art",
+        "children": [
+          {
+            "id": 101,
+            "name": "2D艺术",
+            "slug": "2d-art"
+          },
+          {
+            "id": 103,
+            "name": "硬币和徽章",
+            "slug": "coin-and-badges"
+          },
+          {
+            "id": 102,
+            "name": "标志和标识",
+            "slug": "signs-and-logos"
+          },
+          {
+            "id": 104,
+            "name": "雕塑",
+            "slug": "sculptures"
+          },
+          {
+            "id": 105,
+            "name": "其他艺术模型",
+            "slug": "other-art-models"
+          }
+        ]
+      },
+      {
+        "id": 500,
+        "name": "教育",
+        "slug": "education",
+        "children": [
+          {
+            "id": 503,
+            "name": "生物学",
+            "slug": "biology"
+          },
+          {
+            "id": 505,
+            "name": "化学",
+            "slug": "chemistry"
+          },
+          {
+            "id": 501,
+            "name": "工程学",
+            "slug": "engineering"
+          },
+          {
+            "id": 506,
+            "name": "地理",
+            "slug": "geography"
+          },
+          {
+            "id": 502,
+            "name": "数学",
+            "slug": "mathematics"
+          },
+          {
+            "id": 504,
+            "name": "物理和天文学",
+            "slug": "physics-and-astronomy"
+          },
+          {
+            "id": 507,
+            "name": "其他教育模型",
+            "slug": "other-education-models"
+          }
+        ]
+      },
+      {
+        "id": 200,
+        "name": "时尚",
+        "slug": "fashion",
+        "children": [
+          {
+            "id": 201,
+            "name": "包",
+            "slug": "bags"
+          },
+          {
+            "id": 202,
+            "name": "衣服",
+            "slug": "clothes"
+          },
+          {
+            "id": 206,
+            "name": "耳环",
+            "slug": "earrings"
+          },
+          {
+            "id": 204,
+            "name": "鞋类",
+            "slug": "footwear"
+          },
+          {
+            "id": 203,
+            "name": "眼镜",
+            "slug": "glasses"
+          },
+          {
+            "id": 208,
+            "name": "珠宝",
+            "slug": "jewelry"
+          },
+          {
+            "id": 205,
+            "name": "戒指",
+            "slug": "rings"
+          },
+          {
+            "id": 207,
+            "name": "其他时尚模型",
+            "slug": "other-fashion-models"
+          }
+        ]
+      },
+      {
+        "id": 300,
+        "name": "爱好和 DIY",
+        "slug": "hobby-and-diy",
+        "children": [
+          {
+            "id": 301,
+            "name": "电子",
+            "slug": "electronics"
+          },
+          {
+            "id": 303,
+            "name": "音乐",
+            "slug": "music"
+          },
+          {
+            "id": 304,
+            "name": "遥控",
+            "slug": "rc"
+          },
+          {
+            "id": 305,
+            "name": "机器人",
+            "slug": "robotics"
+          },
+          {
+            "id": 306,
+            "name": "运动和户外",
+            "slug": "sport-and-outdoors"
+          },
+          {
+            "id": 302,
+            "name": "车辆",
+            "slug": "vehicles"
+          },
+          {
+            "id": 307,
+            "name": "其他爱好和DIY模型",
+            "slug": "other-hobby-and-diy"
+          }
+        ]
+      },
+      {
+        "id": 400,
+        "name": "家用",
+        "slug": "household",
+        "children": [
+          {
+            "id": 401,
+            "name": "装饰品",
+            "slug": "decor"
+          },
+          {
+            "id": 403,
+            "name": "节日",
+            "slug": "festivities"
+          },
+          {
+            "id": 402,
+            "name": "花园",
+            "slug": "garden"
+          },
+          {
+            "id": 404,
+            "name": "办公室",
+            "slug": "office"
+          },
+          {
+            "id": 405,
+            "name": "宠物",
+            "slug": "pets"
+          },
+          {
+            "id": 406,
+            "name": "其他家用模型",
+            "slug": "other-house-models"
+          }
+        ]
+      },
+      {
+        "id": 600,
+        "name": "微缩模型",
+        "slug": "miniatures",
+        "children": [
+          {
+            "id": 601,
+            "name": "动物",
+            "slug": "animals"
+          },
+          {
+            "id": 602,
+            "name": "建筑",
+            "slug": "architecture"
+          },
+          {
+            "id": 603,
+            "name": "生物",
+            "slug": "creatures"
+          },
+          {
+            "id": 604,
+            "name": "人物",
+            "slug": "people"
+          },
+          {
+            "id": 605,
+            "name": "其他微缩模型",
+            "slug": "other-miniatures"
+          }
+        ]
+      },
+      {
+        "id": 1000,
+        "name": "道具和角色扮演",
+        "slug": "props-and-cosplays",
+        "children": [
+          {
+            "id": 1003,
+            "name": "服装",
+            "slug": "costumes"
+          },
+          {
+            "id": 1001,
+            "name": "面具和头盔",
+            "slug": "masks-and-helmets"
+          },
+          {
+            "id": 1002,
+            "name": "道具武器",
+            "slug": "replica-weapon"
+          },
+          {
+            "id": 1004,
+            "name": "其他道具和角色扮演",
+            "slug": "other-props-and-cosplays"
+          }
+        ]
+      },
+      {
+        "id": 700,
+        "name": "工具",
+        "slug": "tools",
+        "children": [
+          {
+            "id": 705,
+            "name": "小工具",
+            "slug": "gadgets"
+          },
+          {
+            "id": 703,
+            "name": "手工工具",
+            "slug": "hand-tools"
+          },
+          {
+            "id": 704,
+            "name": "机械工具",
+            "slug": "machine-tools"
+          },
+          {
+            "id": 702,
+            "name": "测量工具",
+            "slug": "measure-tools"
+          },
+          {
+            "id": 707,
+            "name": "医疗工具",
+            "slug": "medical-tools"
+          },
+          {
+            "id": 701,
+            "name": "收纳工具",
+            "slug": "organizers"
+          },
+          {
+            "id": 706,
+            "name": "其他工具",
+            "slug": "other-tools"
+          }
+        ]
+      },
+      {
+        "id": 800,
+        "name": "玩具和游戏",
+        "slug": "toys-and-games",
+        "children": [
+          {
+            "id": 802,
+            "name": "桌游",
+            "slug": "board-games"
+          },
+          {
+            "id": 801,
+            "name": "角色",
+            "slug": "characters"
+          },
+          {
+            "id": 803,
+            "name": "户外玩具",
+            "slug": "outdoor-toys"
+          },
+          {
+            "id": 804,
+            "name": "拼图",
+            "slug": "puzzles"
+          },
+          {
+            "id": 806,
+            "name": "拼装玩具",
+            "slug": "construction-sets"
+          },
+          {
+            "id": 805,
+            "name": "其他玩具和游戏",
+            "slug": "other-toys-and-games"
+          }
+        ]
+      },
+      {
+        "id": 2000,
+        "name": "生成器模型",
+        "slug": "generative-3d-model",
+        "children": [
+          {
+            "id": 2001,
+            "name": "Hueforge & 浮雕",
+            "slug": "hueforge-lithophane"
+          },
+          {
+            "id": 2002,
+            "name": "标牌定制器",
+            "slug": "make-my-sign"
+          },
+          {
+            "id": 2003,
+            "name": "花瓶生成器",
+            "slug": "make-my-vase"
+          },
+          {
+            "id": 2004,
+            "name": "像素生成器",
+            "slug": "pixel-puzzle-maker"
+          },
+          {
+            "id": 2005,
+            "name": "浮雕生成器",
+            "slug": "3d-to-relief-sculpture"
+          },
+          {
+            "id": 2006,
+            "name": "AI 扫描仪",
+            "slug": "ai-scanner"
+          },
+          {
+            "id": 2007,
+            "name": "图像钥匙扣生成器",
+            "slug": "image-to-keychain"
+          },
+          {
+            "id": 2008,
+            "name": "桌面收纳盒生成器",
+            "slug": "make-my-desk-organizer"
+          },
+          {
+            "id": 2009,
+            "name": "精灵生成器",
+            "slug": "printmon-maker"
+          },
+          {
+            "id": 2010,
+            "name": "雕像生成器",
+            "slug": "statue-maker"
+          },
+          {
+            "id": 2011,
+            "name": "圣诞挂饰定制器",
+            "slug": "christmas-ornament-maker"
+          },
+          {
+            "id": 2012,
+            "name": "镂空灯罩生成器",
+            "slug": "make-my-lantern"
+          }
+        ]
+      }
+    ],
+    "makeronline": [
+      {
+        "id": 33,
+        "name": "3D打印机",
+        "children": [
+          {
+            "id": 35,
+            "name": "3D打印机零件&升级件"
+          },
+          {
+            "id": 34,
+            "name": "3D打印机配件"
+          },
+          {
+            "id": 36,
+            "name": "测试模型"
+          }
+        ]
+      },
+      {
+        "id": 37,
+        "name": "家用",
+        "children": [
+          {
+            "id": 38,
+            "name": "家居装饰"
+          },
+          {
+            "id": 39,
+            "name": "花园"
+          },
+          {
+            "id": 40,
+            "name": "厨房"
+          },
+          {
+            "id": 41,
+            "name": "办公室"
+          },
+          {
+            "id": 42,
+            "name": "节日"
+          },
+          {
+            "id": 43,
+            "name": "客厅"
+          },
+          {
+            "id": 44,
+            "name": "宠物"
+          },
+          {
+            "id": 45,
+            "name": "其他家用"
+          }
+        ]
+      },
+      {
+        "id": 46,
+        "name": "爱好与DIY",
+        "children": [
+          {
+            "id": 47,
+            "name": "汽车配件"
+          },
+          {
+            "id": 48,
+            "name": "电子产品"
+          },
+          {
+            "id": 49,
+            "name": "音乐"
+          },
+          {
+            "id": 50,
+            "name": "体育与户外"
+          },
+          {
+            "id": 51,
+            "name": "遥控模型"
+          },
+          {
+            "id": 52,
+            "name": "机器人技术"
+          },
+          {
+            "id": 53,
+            "name": "机械零部件"
+          },
+          {
+            "id": 54,
+            "name": "其他爱好与DIY"
+          }
+        ]
+      },
+      {
+        "id": 55,
+        "name": "工具",
+        "children": [
+          {
+            "id": 56,
+            "name": "小玩意儿"
+          },
+          {
+            "id": 61,
+            "name": "整理收纳"
+          },
+          {
+            "id": 60,
+            "name": "手工工具"
+          },
+          {
+            "id": 59,
+            "name": "机械工具"
+          },
+          {
+            "id": 58,
+            "name": "医疗工具"
+          },
+          {
+            "id": 57,
+            "name": "其他工具"
+          }
+        ]
+      },
+      {
+        "id": 62,
+        "name": "玩具与游戏",
+        "children": [
+          {
+            "id": 69,
+            "name": "动作人物"
+          },
+          {
+            "id": 104,
+            "name": "人物形象"
+          },
+          {
+            "id": 68,
+            "name": "棋盘游戏"
+          },
+          {
+            "id": 67,
+            "name": "积木玩具"
+          },
+          {
+            "id": 66,
+            "name": "户外玩具"
+          },
+          {
+            "id": 65,
+            "name": "拼图"
+          },
+          {
+            "id": 64,
+            "name": "车辆模型"
+          },
+          {
+            "id": 63,
+            "name": "其他玩具与游戏"
+          }
+        ]
+      },
+      {
+        "id": 70,
+        "name": "艺术",
+        "children": [
+          {
+            "id": 75,
+            "name": "2D图案"
+          },
+          {
+            "id": 74,
+            "name": "雕塑&雕像"
+          },
+          {
+            "id": 105,
+            "name": "动物"
+          },
+          {
+            "id": 73,
+            "name": "标识与商标"
+          },
+          {
+            "id": 72,
+            "name": "徽章"
+          },
+          {
+            "id": 71,
+            "name": "其他艺术"
+          }
+        ]
+      },
+      {
+        "id": 76,
+        "name": "时尚",
+        "children": [
+          {
+            "id": 81,
+            "name": "配件"
+          },
+          {
+            "id": 80,
+            "name": "包袋与钱包"
+          },
+          {
+            "id": 79,
+            "name": "服装"
+          },
+          {
+            "id": 78,
+            "name": "珠宝"
+          },
+          {
+            "id": 77,
+            "name": "其他时尚"
+          }
+        ]
+      },
+      {
+        "id": 82,
+        "name": "教育",
+        "children": [
+          {
+            "id": 89,
+            "name": "生物学"
+          },
+          {
+            "id": 88,
+            "name": "化学"
+          },
+          {
+            "id": 87,
+            "name": "地理学"
+          },
+          {
+            "id": 86,
+            "name": "工程学"
+          },
+          {
+            "id": 85,
+            "name": "物理学&天文学"
+          },
+          {
+            "id": 84,
+            "name": "数学"
+          },
+          {
+            "id": 83,
+            "name": "其他教育"
+          }
+        ]
+      },
+      {
+        "id": 90,
+        "name": "服装与角色扮演",
+        "children": [
+          {
+            "id": 94,
+            "name": "服装"
+          },
+          {
+            "id": 93,
+            "name": "面具"
+          },
+          {
+            "id": 92,
+            "name": "道具"
+          },
+          {
+            "id": 91,
+            "name": "其他服装与角色扮演"
+          }
+        ]
+      },
+      {
+        "id": 95,
+        "name": "微型模型",
+        "children": [
+          {
+            "id": 101,
+            "name": "角色"
+          },
+          {
+            "id": 100,
+            "name": "建筑学"
+          },
+          {
+            "id": 99,
+            "name": "生物"
+          },
+          {
+            "id": 98,
+            "name": "游戏配件"
+          },
+          {
+            "id": 97,
+            "name": "奇幻与科幻"
+          },
+          {
+            "id": 96,
+            "name": "其他微型模型"
+          }
+        ]
+      },
+      {
+        "id": 106,
+        "name": "健康与健身",
+        "children": [
+          {
+            "id": 107,
+            "name": "健康"
+          },
+          {
+            "id": 108,
+            "name": "无障碍"
+          }
+        ]
+      },
+      {
+        "id": 109,
+        "name": "流行文化",
+        "children": [
+          {
+            "id": 110,
+            "name": "角色"
+          },
+          {
+            "id": 111,
+            "name": "梗图与趋势"
+          },
+          {
+            "id": 112,
+            "name": "其他流行文化"
+          }
+        ]
+      },
+      {
+        "id": 113,
+        "name": "生成式3D模型",
+        "children": [
+          {
+            "id": 114,
+            "name": "定制手机壳"
+          },
+          {
+            "id": 115,
+            "name": "定制灯具"
+          },
+          {
+            "id": 117,
+            "name": "AI生成模型"
+          }
+        ]
+      },
+      {
+        "id": 119,
+        "name": "创意套件模型",
+        "children": []
+      }
+    ]
+  }
+}
