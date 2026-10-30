@@ -788,3 +788,27 @@ test('订阅：连点两次「立即跑」不会并发打站点', async () => {
   assert.equal(r.rejected, true, '第二次点要直接被拒');
   assert.equal(r.peak, 1, '任何时刻最多一个搜索在飞');
 });
+
+test('手动加的链接插队：下一个就跑它，其它站不被饿死', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'mk-t-'));
+  const { out, err } = await runTasks(`
+    const tasks = await import('./tasks.mjs');
+    tasks.pause();
+    const C = 'https://www.crealitycloud.cn/model-detail/';
+    const S = 'https://space.snapmaker.cn/zh/model/';
+    for (const id of ['aaaaaaaaaaaaaaaaaaaaaaaa','bbbbbbbbbbbbbbbbbbbbbbbb']) tasks.enqueue({ url: C + id, source: 'subscribe' });
+    tasks.enqueue({ url: S + '1695-x', source: 'subscribe' });
+    const order = [];
+    tasks.onFinish((t) => order.push(t.url.split('/').pop().slice(0, 4)));
+    const manual = tasks.enqueue({ url: C + 'dddddddddddddddddddddddd', source: 'manual' });
+    tasks.resume();
+    await manual.done;
+    await new Promise((r) => setTimeout(r, 500));
+    console.log(JSON.stringify(order));
+  `, base);
+  assert.equal(err, '', err);
+  const order = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(order[0], 'dddd', '手动加的那条要第一个跑');
+  assert.equal(order.length, 4);
+  assert.ok(order.includes('1695'), '别的站也要跑到，不被创想云饿死');
+});

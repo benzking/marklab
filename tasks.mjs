@@ -112,6 +112,12 @@ function laneOf(t) {
   return l;
 }
 
+/** 插队：把轮转指针指到这条任务所在的站，下一次取就是它（限速闸门照旧生效）。 */
+function jumpTo(t) {
+  const idx = [...lanes.keys()].indexOf(laneKey(t));
+  if (idx >= 0) laneCursor = idx;
+}
+
 function queuedCount() {
   let n = 0;
   for (const l of lanes.values()) n += l.length;
@@ -264,8 +270,11 @@ export function enqueue({ url, source = 'manual', dir = null, subId = null }) {
   const done = new Promise((r) => (resolve = r));
   resolvers.set(id, resolve);
   const lane = laneOf(task);
-  if (task.force) lane.unshift(task); // 插到它那个站的队首，下一个就跑它
+  // 手动加的链接插队：挪到本站队首 + 轮转指针指过来，下一个就跑它。
+  // 只是排队顺序靠前，闸门（模型间 60–120 秒）照旧等，不会连发（spec §3.2）
+  if (task.force || source === 'manual') lane.unshift(task);
   else lane.push(task);
+  if (source === 'manual') jumpTo(task);
   persist(task).catch(() => {});
   saveState().catch(() => {});
   pump();
@@ -536,6 +545,7 @@ export function retry(id) {
   const lane = laneOf(t);
   if (t.force) lane.unshift(t);
   else lane.push(t);
+  jumpTo(t);
   persist(t).catch(() => {});
   saveState().catch(() => {});
   pump();
@@ -556,6 +566,7 @@ export function promote(id) {
   if (!unqueue(t)) return { ok: false, error: '不在队列里' };
   t.force = paused; // 暂停中插队：只放行这一条，不解除暂停
   laneOf(t).unshift(t);
+  jumpTo(t);
   saveState().catch(() => {});
   pump();
   return { ok: true };
