@@ -10,6 +10,7 @@ import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
 import { httpGet } from './_http.mjs';
 
 const HOSTS = ['space.snapmaker.cn'];
+const SITE = 'https://space.snapmaker.cn';
 const API = 'https://api-models.snapmaker.cn';
 const CDN = 'https://cdn-model-private.snapmaker.cn';
 const SORTS = new Set(['downloads', 'likes', 'collects']);
@@ -27,7 +28,7 @@ export function match(raw) {
   if (!HOSTS.includes(host)) return null;
   const id = /^(?:\/[a-z]{2})?\/model\/(\d+)/i.exec(u.pathname)?.[1];
   if (!id) return null;
-  return { name: 'snapmaker', id, url: `https://${u.hostname.toLowerCase()}${u.pathname}` };
+  return { site: 'snapmaker', id, url: `https://${u.hostname.toLowerCase()}${u.pathname}` };
 }
 
 /**
@@ -292,7 +293,58 @@ export async function userModels({ uid, page = 1, pageSize = 20 } = {}) {
   return { total: num(j.data.total), items: list.map(normalize) };
 }
 
-export default { site: 'snapmaker', label: 'Snapmaker', hosts: HOSTS, match, loginState, meta, fileLinks, search, userModels };
+/** 用户主页网址 → {site, id}。 */
+export function matchUser(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ''));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  if (!HOSTS.includes(u.hostname.toLowerCase().replace(/^www\./, ''))) return null;
+  const id = /^\/(?:[a-z]{2}\/)?creator\/(\d+)/i.exec(u.pathname)?.[1];
+  return id ? { site: 'snapmaker', id } : null;
+}
+
+/** 一级分类树。分类在 RSC 载荷的 categories 里（id/parentId/nameKey）。 */
+export async function categories() {
+  const { text } = await httpGet(`${SITE}/zh/models`);
+  const flat = [...text.matchAll(/self\.__next_f\.push\((\[[\s\S]*?\])\)<\/script>/g)]
+    .map((m) => {
+      try { return JSON.parse(m[1])[1] || ''; } catch { return ''; }
+    })
+    .join('');
+  const start = flat.indexOf('"categories":[');
+  if (start < 0) throw new Error('RSC 载荷里没有 categories（站点结构变了？）');
+  const raw = flat.slice(start + '"categories":'.length);
+  let depth = 0;
+  let end = 0;
+  for (let i = 0; i < raw.length; i++) {
+    if (raw[i] === '[') depth++;
+    else if (raw[i] === ']' && --depth === 0) { end = i + 1; break; }
+  }
+  const roots = JSON.parse(raw.slice(0, end));
+  const pick = (c) => ({ id: c.id, name: c.nameKey, children: (c.children || []).map((x) => ({ id: x.id, name: x.nameKey })) });
+  return roots.flatMap((r) => r.children || []).map(pick);
+}
+
+export default {
+  site: 'snapmaker',
+  platform: 'snapmaker',
+  label: 'Snapmaker',
+  hosts: HOSTS,
+  discover: true,
+  categoriesKey: 'snapmaker',
+  match,
+  matchUser,
+  loginState,
+  meta,
+  fileLinks,
+  categories,
+  search,
+  userModels,
+};
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'snapmaker.mjs') {

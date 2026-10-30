@@ -33,7 +33,7 @@ export function match(raw) {
   if (!HOSTS.includes(host)) return null;
   const id = /\/model-detail\/([0-9a-f]{24})/i.exec(u.pathname)?.[1];
   if (!id) return null;
-  return { name: 'creality', id, url: `${SITE}/model-detail/${id}` };
+  return { site: 'creality', id, url: `${SITE}/model-detail/${id}` };
 }
 
 /** 登录态：必须成对带 token + uid，只带 token 会 code:4 Invalid Token（2026-10-29 实测）。 */
@@ -267,7 +267,52 @@ export async function userModels({ uid, page = 1, pageSize = 20 } = {}) {
   return { total: num(j.result.count), items: list.map(normalize) };
 }
 
-export default { site: 'creality', label: '创想云', hosts: HOSTS, match, loginState, meta, fileLinks, search, userModels };
+/** 用户主页网址 → {site, id}，认不出返回 null（不猜）。 */
+export function matchUser(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ''));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  if (!HOSTS.includes(u.hostname.toLowerCase().replace(/^www\./, ''))) return null;
+  const id = /^\/user\/(\d+)/.exec(u.pathname)?.[1];
+  return id ? { site: 'creality', id } : null;
+}
+
+/** 一级分类树（含二级）。站点把分类塞在 __NUXT_DATA__ 的 modelCategoryBaseData 里。 */
+export async function categories() {
+  const { text } = await httpGet(`${SITE}/model-category/3d-print-all`);
+  const raw = /id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(text)?.[1];
+  if (!raw) throw new Error('分类页没有 __NUXT_DATA__（站点结构变了？）');
+  const cats = resolveNuxt(JSON.parse(raw)).data.modelCategoryBaseData.categories;
+  return cats
+    .filter((c) => c.urlKey !== '3d-print-all') // 「全部分类」是筛选项不是分类
+    .map((c) => ({
+      id: c.id,
+      name: c.name,
+      en: c.en_name || '',
+      children: (c.children || []).map((x) => ({ id: x.id, name: x.name, en: x.en_name || '' })),
+    }));
+}
+
+export default {
+  site: 'creality',
+  platform: 'creality',
+  label: '创想云',
+  hosts: HOSTS,
+  discover: true,
+  categoriesKey: 'creality',
+  match,
+  matchUser,
+  loginState,
+  meta,
+  fileLinks,
+  categories,
+  search,
+  userModels,
+};
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {

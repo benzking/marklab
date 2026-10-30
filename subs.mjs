@@ -108,7 +108,7 @@ export async function create(input = {}) {
     ...input,
     keywords: cleanKeywords(input.keywords),
     users: cleanUsers(input.users),
-    sites: (input.sites || DEFAULTS.sites).filter((s) => search.SITES.includes(s)),
+    sites: (input.sites || DEFAULTS.sites).filter((s) => search.ALL_SITES.includes(s)),
     id: `s_${randomUUID().slice(0, 8)}`,
     createdAt: new Date().toISOString(),
     lastRunAt: null,
@@ -125,7 +125,7 @@ export async function update(id, patch = {}) {
   const next = { ...sub, ...patch, id: sub.id };
   if (Array.isArray(patch.keywords)) next.keywords = cleanKeywords(patch.keywords);
   if (Array.isArray(patch.users)) next.users = cleanUsers(patch.users);
-  if (Array.isArray(patch.sites)) next.sites = patch.sites.filter((s) => search.SITES.includes(s));
+  if (Array.isArray(patch.sites)) next.sites = patch.sites.filter((s) => search.ALL_SITES.includes(s));
   if (!(next.users || []).length && (!(next.keywords || []).length || !next.sites.length)) throw new Error('订阅至少要一个关键字或一个用户主页');
   Object.assign(sub, next);
   await persist();

@@ -1,35 +1,23 @@
-// 四站搜索适配器：统一 Item 形状 + 按站限速（ADR-0005 第 3 节）。
-// 网络层和归一化层分开，纯函数能被自检直接跑；字段缺失一律给安全默认值，不抛。
-import { siteOf } from './channel.mjs';
-import { str, num, iso } from './lib.mjs';
+// 站点搜索：统一 Item 形状 + 按站限速（ADR-0005 第 3 节）。
+// 具体怎么搜在站点包里，这里只管限速、兜错、归一化。
 import * as sites from './sites/index.mjs';
 
-export const SITES = ['creality', 'makerworld', 'snapmaker', 'makeronline'];
+// 默认进搜索/订阅的站点：站点包自己声明 discover（MakerOnline 的 .com 是同一个站的另一套账号，
+// 不默认进，免得把搜索预算翻倍）。
+export const SITES = sites.all().filter((p) => p.discover !== false).map((p) => p.searchKey || p.site);
+// 显式指定时允许的键（含别名），订阅校验用它
+export const ALL_SITES = [...new Set(sites.all().flatMap((p) => [p.searchKey || p.site, ...(p.aliases || [])]))];
 export const RATE = { perSite: 4, windowMs: 60_000, minGapMs: 15_000 };
 
-/** 纯函数：用户主页网址 → {site, id}。四个站各一种写法，认不出返回 null（不猜）。 */
+/** 纯函数：用户主页网址 → {site, id}。每个站点包自己认自己的写法，认不出返回 null（不猜）。 */
 export function parseUserUrl(input) {
   const raw = String(input || '').trim();
-  const site = siteOf(raw);
-  if (!site) return null;
-  let pathname;
-  try {
-    pathname = new URL(raw).pathname;
-  } catch {
-    return null;
+  if (!raw) return null;
+  for (const pack of sites.all()) {
+    const hit = pack.matchUser?.(raw);
+    if (hit) return hit;
   }
-  const pick = (re) => (re.exec(pathname) || [])[1];
-  const id =
-    site === 'creality'
-      ? pick(/^\/user\/(\d+)/)
-      : site === 'makerworld'
-        ? pick(/^\/(?:[a-z]{2}\/)?@([^/]+)/i)
-        : site === 'snapmaker'
-          ? pick(/^\/(?:[a-z]{2}\/)?creator\/(\d+)/i)
-          : site === 'makeronline'
-            ? pick(/\/user\/personalInfo\/([0-9a-f-]{36})/i)
-            : null;
-  return id ? { site, id: decodeURIComponent(id) } : null;
+  return null;
 }
 
 

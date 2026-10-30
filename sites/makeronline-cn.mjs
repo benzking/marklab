@@ -27,7 +27,7 @@ export function match(raw) {
   if (!HOSTS.includes(host)) return null;
   const id = /^(?:\/[a-z]{2})?\/model\/.*?(\d+)\.html/i.exec(u.pathname)?.[1];
   if (!id) return null;
-  return { name: 'makeronline.cn', id, url: `${SITE}${u.pathname}` };
+  return { site: 'makeronline.cn', id, url: `${SITE}${u.pathname}` };
 }
 
 /** 只认 .cn 自己的 cookie：`.com` 的 mo_access_token 是另一套账号（spec §7）。 */
@@ -99,6 +99,7 @@ export async function meta(url) {
 
   return {
     platform: PLATFORM,
+  aliases: ['makeronline'], // 订阅/搜索沿用历史上的 `makeronline` 键，落到国内站
     site: 'cn',
     id: hit.id,
     sourceUrl: canonical,
@@ -291,14 +292,30 @@ export async function userModels({ uid, page = 1, pageSize = 20 } = {}) {
   };
 }
 
-// 订阅/搜索沿用历史上的 `makeronline` 键（当时只有 .cn 一个域）
+/** 用户主页网址 → {site, id}。MakerOnline 的用户标识是 uuid。 */
+export function matchUser(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ''));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  if (!HOSTS.includes(u.hostname.toLowerCase().replace(/^www\./, ''))) return null;
+  const id = /\/user\/personalInfo\/([0-9a-f-]{36})/i.exec(u.pathname)?.[1];
+  return id ? { site: 'makeronline.cn', id } : null;
+}
+
 export default {
   site: 'makeronline.cn',
   platform: PLATFORM,
-  aliases: ['makeronline'],
+  aliases: ['makeronline'], // 订阅/搜索沿用历史上的 `makeronline` 键，落到国内站
   label: 'MakerOnline.cn',
   hosts: HOSTS,
+  discover: true,
+  searchKey: 'makeronline',
   match,
+  matchUser,
   loginState,
   meta,
   fileLinks,

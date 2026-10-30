@@ -24,7 +24,8 @@ export function match(raw) {
   if (!HOSTS.includes(host)) return null;
   const id = /\/models\/(\d+)/.exec(u.pathname)?.[1];
   if (!id) return null;
-  return { name: 'makerworld', id, url: `${SITE}/zh/models/${id}` };
+  // 带 slug 的地址原样保留（站点会用它做 SSR），但只用重组出来的干净串，丢掉 query/fragment
+  return { site: 'makerworld', id, url: `https://${u.hostname.toLowerCase()}${u.pathname}` };
 }
 
 /** 登录 cookie 是 HttpOnly，且该站挡 TLS 指纹，只能走真浏览器页内 fetch。 */
@@ -231,13 +232,65 @@ export async function userModels({ uid, page = 1 } = {}) {
   return { total: num(data.total), items: data.designs.map((raw) => normalize({ ...raw, cover: raw.coverUrl })) };
 }
 
-export default { site: 'makerworld', label: 'MakerWorld', hosts: HOSTS, match, loginState, meta, fileLinks, search, userModels };
+/** 用户主页网址 → {site, id}（MakerWorld 的用户标识是用户名，不是数字）。 */
+export function matchUser(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ''));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  if (!HOSTS.includes(u.hostname.toLowerCase().replace(/^www\./, ''))) return null;
+  const id = /^\/(?:[a-z]{2}\/)?@([^/]+)/i.exec(u.pathname)?.[1];
+  return id ? { site: 'makerworld', id: decodeURIComponent(id) } : null;
+}
+
+/** 一级分类树。整站挡非浏览器 UA，只能在页面里读分类链接（id 的百位段就是一级）。 */
+export async function categories() {
+  const expr = `JSON.stringify([...document.querySelectorAll('a[href*="/zh/3d-models/"]')]
+    .map(a => ({ href: a.getAttribute('href'), name: a.textContent.trim() })))`;
+  const { value } = await ch.evalInPage(`${SITE}/zh/3d-models`, expr, { wait: 6000 });
+  const links = JSON.parse(value)
+    .map(({ href, name }) => {
+      const m = /\/zh\/3d-models\/(\d+)-([\w-]+)/.exec(href || '');
+      return m && { id: Number(m[1]), slug: m[2], name };
+    })
+    .filter(Boolean);
+  if (!links.length) throw new Error('页面里没读到分类链接（站点结构变了或没登录？）');
+  const tops = links.filter((l) => l.id === Math.floor(l.id / 100) * 100);
+  return tops.map((t) => ({
+    id: t.id,
+    name: t.name,
+    slug: t.slug,
+    children: links
+      .filter((l) => l !== t && Math.floor(l.id / 100) * 100 === t.id)
+      .map((l) => ({ id: l.id, name: l.name, slug: l.slug })),
+  }));
+}
+
+export default {
+  site: 'makerworld',
+  platform: 'makerworld',
+  label: 'MakerWorld',
+  hosts: HOSTS,
+  discover: true,
+  categoriesKey: 'makerworld',
+  match,
+  matchUser,
+  loginState,
+  meta,
+  fileLinks,
+  categories,
+  search,
+  userModels,
+};
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   const id = '195581';
   console.assert(match(`https://makerworld.com.cn/zh/models/${id}`)?.id === id, '标准模型页');
-  console.assert(match(`https://makerworld.com/zh/models/${id}?from=search`)?.url === `https://makerworld.com.cn/zh/models/${id}`, '换域也重组到 .cn');
+  console.assert(match(`https://makerworld.com/zh/models/${id}?from=search`)?.url === `https://makerworld.com/zh/models/${id}`, '两个域都认，重组时丢掉 query');
   console.assert(match('https://makerworld.com.cn/zh/@someone/upload') === null, '用户页不是模型页');
   console.assert(match('https://makerworld.com.cn.evil.example/zh/models/1') === null, '相似域名不认');
 

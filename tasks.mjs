@@ -4,7 +4,8 @@
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ROOT, matchPlatform } from './lib.mjs';
+import { ROOT } from './lib.mjs';
+import { match as matchSite } from './sites/index.mjs';
 
 const TASKS_DIR = path.join(ROOT, 'data', 'tasks');
 // 暂停开关存盘：重启后停在暂停，直到人点「继续」（否则 systemd 一重启就把几十条任务全放出来）
@@ -174,7 +175,7 @@ export function enqueue({ url, source = 'manual', dir = null, subId = null }) {
     url,
     dir,
     // 入队时就认站点：列表/日志要显示站点，等子进程回报太晚
-    site: matchPlatform(url)?.name || null,
+    site: matchSite(url)?.site || null,
     title: null,
     source,
     subId,

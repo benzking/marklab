@@ -93,13 +93,13 @@ async function download(target, dest, site) {
 // 认网址只问站点包（sites/index.mjs）；认不出就拒，不再猜
 const hit = sites.match(url);
 if (!hit) {
-  console.error('暂不支持的站点。目前支持：\n  space.snapmaker.cn / crealitycloud.cn / makerworld.com.cn / makeronline.cn|com');
+  console.error(`暂不支持的站点。目前支持：\n  ${sites.all().flatMap((p) => p.hosts).join(' / ')}`);
   process.exit(2);
 }
 
 // platform 是数据命名空间（库目录、判重键）：MakerOnline 的 .cn/.com 共用一个；
 // site 是站点键（浏览器 cookie、登录态、日志）：两个域各自独立。
-const { name: site, id } = hit;
+const { site, id } = hit;
 const pack = sites.byName(site);
 if (!pack) {
   console.error(`站点包没登记：${site}（sites/index.mjs）`);

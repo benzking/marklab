@@ -21,42 +21,6 @@ export async function writeJson(file, value, opts) {
   await rename(tmp, file);
 }
 
-// 站点识别只认 hostname 完全一致的那几个域名，正则只跑 pathname。
-// 整串跑正则的话 `http://坏站/x#https://真站/model-detail/<id>` 会被认成真站，等于把抓取目标交给对方。
-const HOSTS = {
-  creality: ['crealitycloud.cn'],
-  makerworld: ['makerworld.com', 'makerworld.com.cn'],
-  snapmaker: ['space.snapmaker.cn'],
-  makeronline: ['makeronline.cn', 'makeronline.com'],
-};
-const PATHS = {
-  creality: /\/model-detail\/([0-9a-f]{24})/i,
-  makerworld: /\/models\/(\d+)/,
-  // 带 slug 的地址才有完整 SSR（/model/1695-model 与 /model/1695 内容不一样）
-  snapmaker: /^(?:\/[a-z]{2})?\/model\/(\d+)/i,
-  // id 在最后：/zh/model/<slug>/341770.html；本地语前缀可省
-  makeronline: /^(?:\/[a-z]{2})?\/model\/.*?(\d+)\.html/i,
-};
-
-/** 认站点。返回的 url 是重组出来的干净网址，抓取只许用它，不许用调用方给的原串。 */
-export function matchPlatform(raw) {
-  let u;
-  try {
-    u = new URL(String(raw || ''));
-  } catch {
-    return null;
-  }
-  if (!/^https?:$/.test(u.protocol)) return null;
-  const host = u.hostname.toLowerCase().replace(/^www\./, '');
-  for (const [name, domains] of Object.entries(HOSTS)) {
-    if (!domains.includes(host)) continue;
-    const id = PATHS[name].exec(u.pathname)?.[1];
-    if (!id) return null;
-    return { name, id, url: `https://${u.hostname.toLowerCase()}${u.pathname}` };
-  }
-  return null;
-}
-
 // Nuxt 的 __NUXT_DATA__ 是 devalue 序列化：数组里数字是引用，字符串是字面量，
 // ["Reactive", n] 这类是包装器，取第 2 个元素即可。
 const MARKERS = new Set(['Reactive', 'ShallowReactive', 'Ref', 'ShallowRef', 'EmptyRef', 'EmptyShallowRef', 'Date', 'Set', 'Map', 'RegExp', 'BigInt', 'Object', 'null']);

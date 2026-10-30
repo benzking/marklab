@@ -2,8 +2,8 @@
 // 凭据只在内存里过一遍，不落盘、不打印（ADR-0001）。
 import * as sites from './sites/index.mjs';
 
-// 顺序就是控制台里的显示顺序；标签优先取站点包自己的
-const ORDER = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com'];
+// 顺序就是控制台里的显示顺序，由 sites/index.mjs 的登记顺序决定
+const ORDER = sites.all().map((p) => p.site);
 
 /** 探测一个站。返回 {site,label,ok,status,name,reason}。站点自己的事都在包里，这里只管调用。 */
 export async function probe(site) {

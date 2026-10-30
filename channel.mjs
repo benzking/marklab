@@ -11,7 +11,6 @@ export const DOMAINS = {
   creality: ['crealitycloud.cn', 'crealitycloud.com'],
   makerworld: ['makerworld.com', 'makerworld.com.cn'],
   snapmaker: ['snapmaker.cn', 'snapmaker.com'],
-  makeronline: ['makeronline.com', 'makeronline.cn'],
   // .cn 与 .com 是两套登录态，各自取各自的 cookie，绝不合进同一个请求头（spec §7）
   'makeronline.cn': ['makeronline.cn'],
   'makeronline.com': ['makeronline.com'],
@@ -189,7 +188,7 @@ function demo() {
   };
   console.assert(pick('creality').length === 1, 'creality 应只收自己域');
   console.assert(pick('makerworld')[0].name === 'b', 'makerworld 命中');
-  console.assert(pick('makeronline')[0].name === 'c', 'makeronline 命中');
+  console.assert(pick('makeronline.cn')[0].name === 'c', 'makeronline 命中');
   console.assert(pick('snapmaker').length === 0, '没登录的站返回空');
   console.log('channel demo ok');
 }

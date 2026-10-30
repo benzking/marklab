@@ -7,7 +7,14 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { matchPlatform, resolveNuxt, sanitize, slugify, autoTags, catIndex, catOf, inside } from './lib.mjs';
+import { resolveNuxt, sanitize, slugify, autoTags, catIndex, catOf, inside } from './lib.mjs';
+import * as sitePacks from './sites/index.mjs';
+
+// 站点识别搬进站点包了（票 06）。这里留一层薄壳，老断言不用改：包里叫 site，这里叫 name。
+const matchPlatform = (u) => {
+  const h = sitePacks.match(u);
+  return h ? { name: h.site, id: h.id, url: h.url } : null;
+};
 import * as dup from './dup.mjs';
 
 test('认得出三个站点的网址，并抽出 id', () => {
@@ -106,13 +113,13 @@ test('不是 zip 的文件要报错而不是崩', async () => {
 
 test('MakerOnline 的网址能认出 id', () => {
   const u = 'https://www.makeronline.com/zh/model/Panther%20Tankhead%20Mech,%20easy%20to%20print%20and%20assemble,%20movable%20gun%20barrel,%20gear%20joints,%20World%20War%20II/341770.html?trackModuleType=4';
-  assert.deepEqual(matchPlatform(u), { name: 'makeronline', id: '341770', url: 'https://www.makeronline.com/zh/model/Panther%20Tankhead%20Mech,%20easy%20to%20print%20and%20assemble,%20movable%20gun%20barrel,%20gear%20joints,%20World%20War%20II/341770.html' });
+  assert.deepEqual(matchPlatform(u), { name: 'makeronline.com', id: '341770', url: 'https://www.makeronline.com/zh/model/Panther%20Tankhead%20Mech,%20easy%20to%20print%20and%20assemble,%20movable%20gun%20barrel,%20gear%20joints,%20World%20War%20II/341770.html' });
   // 搜索结果里给的网址没有 /zh/ 前缀，标题直接进路径：漏了这条 15 个命中全被当「不支持的站点」丢掉
   const a = matchPlatform('https://www.makeronline.cn/model/皮卡丘/239813.html');
-  assert.equal(a.name, 'makeronline'); assert.equal(a.id, '239813');
+  assert.equal(a.name, 'makeronline.cn'); assert.equal(a.id, '239813');
   assert.ok(a.url.startsWith('https://www.makeronline.cn/model/'), '重组网址带原路径');
   const b = matchPlatform('https://www.makeronline.cn/zh/model/古代混浊-341770.html');
-  assert.equal(b.name, 'makeronline'); assert.equal(b.id, '341770');
+  assert.equal(b.name, 'makeronline.cn'); assert.equal(b.id, '341770');
   assert.ok(b.url.startsWith('https://www.makeronline.cn/zh/model/'), '重组网址带原路径');
 });
 
@@ -123,7 +130,23 @@ test('创想云带 profileId 的 3mf 版网址也能认出 id', () => {
 
 test('MakerOnline 国内站 .cn 也认', () => {
   const u = 'https://www.makeronline.cn/zh/model/%E5%8F%A4%E4%BB%A3%E6%B7%B7%E6%B2%8C%E4%B9%8B%E5%BA%93/207581.html';
-  assert.deepEqual(matchPlatform(u), { name: 'makeronline', id: '207581', url: 'https://www.makeronline.cn/zh/model/%E5%8F%A4%E4%BB%A3%E6%B7%B7%E6%B2%8C%E4%B9%8B%E5%BA%93/207581.html' });
+  assert.deepEqual(matchPlatform(u), { name: 'makeronline.cn', id: '207581', url: 'https://www.makeronline.cn/zh/model/%E5%8F%A4%E4%BB%A3%E6%B7%B7%E6%B2%8C%E4%B9%8B%E5%BA%93/207581.html' });
+});
+
+test('加一个站点只碰一个文件：假站点包注册后就能走 match → meta → fileLinks', async () => {
+  const fixture = await import('./sites/_fixture.mjs');
+  sitePacks.registerForTest(fixture.default);
+  const hit = sitePacks.match('https://fixture.example/thing/7?from=search#x');
+  assert.deepEqual(hit, { site: 'fixture', id: '7', url: 'https://fixture.example/thing/7' });
+  const pack = sitePacks.byName('fixture');
+  assert.equal(pack.platform, 'fixture');
+  const model = await pack.meta(hit.url);
+  assert.equal(model.title, '假站点模型');
+  assert.equal(model.files[0].origin, 'author');
+  const links = await pack.fileLinks(model);
+  assert.deepEqual(links.map((l) => [l.name, l.kind]), [['a.stl', 'model']]);
+  // 生产登记表里没有它：五个真包 + 刚注册的这一个
+  assert.equal(sitePacks.all().length, 6);
 });
 
 test('分类对照表把四站每个分类都收进来', () => {
@@ -239,23 +262,23 @@ test('网址只认 hostname 白名单，路径才跑正则（构造网址进不�
 test('站点包与公共层认同一个网址，四站都已进包', async () => {
   const sites = await import('./sites/index.mjs');
   const a = sites.match('https://space.snapmaker.cn/zh/model/1695-kuai-su');
-  assert.deepEqual([a.name, a.id], ['snapmaker', '1695']);
+  assert.deepEqual([a.site, a.id], ['snapmaker', '1695']);
   // 包重组出来的地址要能再被自己认出来（抓取只用它，不能越重组越跑偏）
   assert.deepEqual(sites.match(a.url), a);
   assert.equal(sites.match('http://evil/x#https://space.snapmaker.cn/zh/model/1'), null);
   assert.equal(sites.match('https://space.snapmaker.cn.evil.example/zh/model/1'), null);
   // 已经搬进包的站，包和公共层认的是同一个 id
   const c = sites.match('https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7');
-  assert.deepEqual([c.name, c.id], ['creality', '68fddae0d894ed5f6ce386a7']);
+  assert.deepEqual([c.site, c.id], ['creality', '68fddae0d894ed5f6ce386a7']);
   // MakerOnline 两个域各自成包，数据键都是 makeronline（库目录/判重键不分域）
   const cn = sites.match('https://www.makeronline.cn/zh/model/x/207581.html');
-  assert.deepEqual([cn.name, cn.id], ['makeronline.cn', '207581']);
+  assert.deepEqual([cn.site, cn.id], ['makeronline.cn', '207581']);
   assert.equal(sites.byName('makeronline.cn').platform, 'makeronline');
   // 订阅/搜索沿用旧键 makeronline，要落到 .cn 这个包上
   assert.equal(sites.byName('makeronline').site, 'makeronline.cn');
   // .com 是另一个独立包，数据键同样是 makeronline
   const com = sites.match('https://www.makeronline.com/zh/model/x/341770.html');
-  assert.deepEqual([com.name, com.id], ['makeronline.com', '341770']);
+  assert.deepEqual([com.site, com.id], ['makeronline.com', '341770']);
   assert.equal(sites.byName('makeronline.com').platform, 'makeronline');
   // 两个包互不认对方的域（两套登录态，混了就认错人）
   assert.equal(sites.byName('makeronline.cn').match('https://www.makeronline.com/model/x/1.html'), null);
@@ -269,7 +292,7 @@ test('站点包与公共层认同一个网址，四站都已进包', async () =>
     ['https://www.makeronline.com/zh/model/x/341770.html', 'makeronline.com', '341770'],
   ]) {
     const hit = sites.match(url);
-    assert.deepEqual([hit.name, hit.id], [name, id], url);
+    assert.deepEqual([hit.site, hit.id], [name, id], url);
     assert.equal(matchPlatform(url)?.id, id, url);
   }
 });

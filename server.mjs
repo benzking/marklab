@@ -9,7 +9,8 @@
 import http from 'node:http';
 import { readFile, readdir, rm, stat, mkdir } from 'node:fs/promises';
 import { inspectFile } from './inspect.mjs';
-import { catIndex, catOf, inside, matchPlatform, writeJson, ROOT } from './lib.mjs';
+import { catIndex, catOf, inside, writeJson, ROOT } from './lib.mjs';
+import { match as matchSite } from './sites/index.mjs';
 import * as tasks from './tasks.mjs';
 import * as stats from './stats.mjs';
 import * as subs from './subs.mjs';
@@ -210,7 +211,7 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/grab' && req.method === 'POST') {
       const { url: target } = await readBody(req);
       if (!/^https?:/i.test(target || '')) return json(res, 400, { error: '需要 http(s) 网址' });
-      if (!matchPlatform(target)) return json(res, 400, { error: '不认识的站点网址' });
+      if (!matchSite(target)) return json(res, 400, { error: '不认识的站点网址' });
       const { task } = tasks.enqueue({ url: target, source: 'manual' });
       // 202：不阻塞请求，入库要排限速闸门（可能几分钟）；进度看 /api/console/tasks
       return json(res, 202, { accepted: true, taskId: task.id });
@@ -220,7 +221,7 @@ const server = http.createServer(async (req, res) => {
       const { dir } = await readBody(req);
       const found = await safeModelDir(dir);
       if (!found) return json(res, 404, { error: '没有这个模型' });
-      if (!matchPlatform(found.model.sourceUrl)) return json(res, 400, { error: '这个模型没有可识别的来源网址' });
+      if (!matchSite(found.model.sourceUrl)) return json(res, 400, { error: '这个模型没有可识别的来源网址' });
       const { task } = tasks.enqueue({ url: found.model.sourceUrl, source: 'refetch' });
       return json(res, 202, { accepted: true, taskId: task.id });
     }
@@ -344,7 +345,7 @@ const server = http.createServer(async (req, res) => {
           out.push({
             at: t.createdAt,
             type: 'queue',
-            site: t.site || matchPlatform(t.url)?.name || null,
+            site: t.site || matchSite(t.url)?.site || null,
             title: t.title || t.url,
             url: t.url,
             state: t.phase,

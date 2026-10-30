@@ -27,7 +27,7 @@ export function match(raw) {
   if (!HOSTS.includes(host)) return null;
   const id = /^(?:\/[a-z]{2})?\/model\/.*?(\d+)\.html/i.exec(u.pathname)?.[1];
   if (!id) return null;
-  return { name: 'makeronline.com', id, url: `${SITE}${u.pathname}` };
+  return { site: 'makeronline.com', id, url: `${SITE}${u.pathname}` };
 }
 
 /** 只认 `.com` 自己的 cookie：`.cn` 的 mo_access_token 是另一套账号（spec §7）。 */
@@ -291,15 +291,48 @@ export async function userModels({ uid, page = 1, pageSize = 20 } = {}) {
   };
 }
 
+/** 用户主页网址 → {site, id}。MakerOnline 的用户标识是 uuid。 */
+export function matchUser(raw) {
+  let u;
+  try {
+    u = new URL(String(raw || ''));
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  if (!HOSTS.includes(u.hostname.toLowerCase().replace(/^www\./, ''))) return null;
+  const id = /\/user\/personalInfo\/([0-9a-f-]{36})/i.exec(u.pathname)?.[1];
+  return id ? { site: 'makeronline.com', id } : null;
+}
+
+/** 一级分类树。分类在 `__NUXT__` 的 categoryData 里，浏览器页内取（不在服务端求值站点 JS）。 */
+export async function categories() {
+  const { value } = await ch.evalInPage(`${SITE}/zh/allModel/all/all/0.html`, () =>
+    JSON.stringify(window.__NUXT__?.data?.[0]?.categoryData || null),
+  );
+  if (!value) throw new Error('页面里没有 categoryData（站点结构变了？）');
+  return JSON.parse(value).map((c) => ({
+    id: c.id,
+    name: c.name,
+    children: (c.children || []).filter((x) => x.level === 2).map((x) => ({ id: x.id, name: x.name })),
+  }));
+}
+
 export default {
   site: 'makeronline.com',
   platform: PLATFORM,
   label: 'MakerOnline.com',
   hosts: HOSTS,
+  discover: false,
+  searchKey: 'makeronline.com',
+  // 分类对照表的 id 空间以海外站为准（docs/categories/merge.json 是按它建的）
+  categoriesKey: 'makeronline',
   match,
+  matchUser,
   loginState,
   meta,
   fileLinks,
+  categories,
   search,
   userModels,
 };
