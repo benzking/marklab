@@ -157,6 +157,15 @@ export const fmtHours = (sec) => {
 };
 
 // 站点给的值一律不可信：类型不对就给安全默认值，别把 null 当成 0，也别把 0 当成 1970。
+/** 签名链接里的 % 偶尔不合法，decode 抛错不该让整份文件列表失败。 */
+export const safeDecode = (s) => {
+  try {
+    return decodeURIComponent(s);
+  } catch {
+    return String(s);
+  }
+};
+
 export const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
 export const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 export const iso = (v) => {

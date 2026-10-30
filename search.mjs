@@ -32,27 +32,6 @@ export function parseUserUrl(input) {
   return id ? { site, id: decodeURIComponent(id) } : null;
 }
 
-// ── 归一化（纯函数） ────────────────────────────────────────────
-
-
-export function normalizeMakeronline(raw) {
-  const id = raw?.mold_id == null ? '' : String(raw.mold_id);
-  return {
-    site: 'makeronline',
-    id,
-    title: str(raw?.title) || '',
-    url: str(raw?.target_url) || '',
-    cover: str(raw?.mold_image),
-    author: str(raw?.user_display_name) || str(raw?.user_name),
-    likes: num(raw?.like_num),
-    downloads: num(raw?.download_num),
-    collects: null, // 搜索接口没有收藏数
-    comments: null, // 也没有评论数
-    picked: Boolean(raw?.is_winner),
-    publishedAt: iso(raw?.created_time),
-    tags: Array.isArray(raw?.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
-  };
-}
 
 // ── 限速：按站各自计时，不共享配额 ──────────────────────────────
 
@@ -84,64 +63,18 @@ function throttle(site) {
   return next;
 }
 
-// ── 网络层 ──────────────────────────────────────────────────────
-
-async function fetchMakeronline(keyword, page, pageSize, sort) {
-  // 搜索接口没有排序参数，sort 只保留在返回里
-  const r = await fetch('https://www.makeronline.cn/api/search/model', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0 }),
-  });
-  if (!r.ok) throw new Error(`MakerOnline HTTP ${r.status}`);
-  const j = await r.json();
-  const list = j?.data?.data;
-  if (!Array.isArray(list)) throw new Error('MakerOnline 返回里没有 data.data');
-  return { total: num(j.data.page?.total), items: list.map(normalizeMakeronline) };
-}
-
-// 还没搬进站点包的站（票 04–05 逐个搬走）
-const FETCHERS = {
-  makeronline: fetchMakeronline,
-};
-
 // ── 用户主页：订阅某个作者发过的全部模型 ────────────────────────
 // 四站的主页列表都能匿名取；MakerWorld 照旧只能走真浏览器。
-
-async function fetchMakeronlineUser(uid, page, pageSize) {
-  const q = new URLSearchParams({ page: String(page), page_size: String(pageSize), user_id: uid });
-  const r = await fetch(`https://www.makeronline.cn/api/user/personal/index?${q}`, { headers: { accept: 'application/json' } });
-  if (!r.ok) throw new Error(`MakerOnline HTTP ${r.status}`);
-  const j = await r.json();
-  const list = j?.data?.data;
-  if (!Array.isArray(list)) throw new Error('MakerOnline 用户页返回里没有 data.data');
-  return {
-    total: num(j.data.page?.total),
-    // 用户页列表没有 target_url，按详情页规律拼；标题要编码
-    items: list.map((raw) =>
-      normalizeMakeronline({
-        ...raw,
-        mold_image: raw.main_image || raw.main_thumb_image,
-        target_url: `https://www.makeronline.cn/zh/model/${encodeURIComponent(raw.title || '')}/${raw.mold_id}.html`,
-      }),
-    ),
-  };
-}
-
-const USER_FETCHERS = {
-  makeronline: fetchMakeronlineUser,
-};
 
 /** 拉某个用户主页上的模型。站点失败给空结果，不拖垮整轮（和 search 一个口径）。 */
 export async function userModels(site, uid, { page = 1, pageSize = 20 } = {}) {
   const id = String(uid || '').trim();
   const base = { site, user: id, page, total: 0, items: [] };
   const pack = sites.byName(site);
-  const fetcher = USER_FETCHERS[site];
-  if (!(pack || fetcher) || !id) return base;
+  if (!pack || !id) return base;
   await throttle(site);
   try {
-    const r = pack ? await pack.userModels({ uid: id, page, pageSize }) : await fetcher(id, page, pageSize);
+    const r = await pack.userModels({ uid: id, page, pageSize });
     return { ...base, total: r.total, items: r.items };
   } catch (e) {
     console.error(`[user] ${site} ${id} 失败：${e.message}`);
@@ -154,11 +87,10 @@ export async function search(site, keyword, { page = 1, sort = 'downloads', page
   const kw = String(keyword || '').trim();
   const base = { site, keyword: kw, page, total: 0, items: [] };
   const pack = sites.byName(site);
-  const fetcher = FETCHERS[site];
-  if (!(pack || fetcher) || !kw) return base;
+  if (!pack || !kw) return base;
   await throttle(site);
   try {
-    const r = pack ? await pack.search({ keyword: kw, page, pageSize, sort }) : await fetcher(kw, page, pageSize, sort);
+    const r = await pack.search({ keyword: kw, page, pageSize, sort });
     return { ...base, total: r.total, items: r.items };
   } catch (e) {
     console.error(`[search] ${site} 失败：${e.message}`);
@@ -169,10 +101,6 @@ export async function search(site, keyword, { page = 1, sort = 'downloads', page
 // ── 自检：纯函数，不联网、不起浏览器 ────────────────────────────
 
 function demo() {
-  const o = normalizeMakeronline({ mold_id: 1, title: 'O', target_url: 'https://www.makeronline.cn/model/O/1.html' });
-  console.assert(o.id === '1' && o.collects === null && o.comments === null, 'MakerOnline 无收藏/评论');
-  console.assert(o.publishedAt === null && o.tags.length === 0, 'MakerOnline 缺字段默认');
-
   const t0 = 1_000_000;
   console.assert(rateDelay({}, t0) === 0, '首次不等待');
   console.assert(rateDelay({ last: t0 - 5000, recent: [] }, t0) === 10_000, '间隔不足等 15 秒');

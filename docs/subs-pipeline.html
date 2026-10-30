@@ -1,0 +1,291 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>订阅流程：搜索 → 候选 → 命中</title>
+<style>
+  :root { --ink:#1c2530; --dim:#5b6b7c; --line:#d3dbe4; --bad:#c0392b; --good:#1e8449; --bg:#f6f8fa; }
+  * { box-sizing: border-box; }
+  body { margin:0; padding:32px 28px 60px; background:#fff; color:var(--ink);
+         font:15px/1.7 "Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif; }
+  main { max-width:1280px; margin:0 auto; }
+  h1 { font-size:24px; margin:0 0 6px; }
+  .lede { color:var(--dim); margin:0 0 28px; }
+  h2 { font-size:18px; margin:44px 0 6px; padding-bottom:6px; border-bottom:1px solid var(--line); }
+  h2 span { color:var(--dim); font-weight:400; font-size:14px; margin-left:8px; }
+  .cap { color:var(--dim); font-size:13px; margin:4px 0 14px; }
+  svg { display:block; max-width:100%; height:auto; }
+  .legend { display:flex; gap:22px; flex-wrap:wrap; font-size:13px; color:var(--dim); margin:10px 0 0; }
+  .legend i { display:inline-block; width:11px; height:11px; border-radius:3px; margin-right:6px; vertical-align:-1px; }
+  table { border-collapse:collapse; width:100%; font-size:14px; }
+  th, td { border-bottom:1px solid var(--line); padding:9px 12px; text-align:left; vertical-align:top; }
+  th { background:var(--bg); font-weight:600; white-space:nowrap; }
+  td:first-child { white-space:nowrap; font-weight:600; }
+  .bad { color:var(--bad); } .good { color:var(--good); }
+  .kbd { font-family:ui-monospace,Menlo,Consolas,monospace; font-size:13px; background:var(--bg);
+         padding:1px 5px; border-radius:4px; }
+  footer { margin-top:40px; color:var(--dim); font-size:13px; }
+</style>
+</head>
+<body>
+<main>
+
+<h1>订阅流程：搜索 → 候选 → 命中</h1>
+<p class="lede">一张图说清现在错在哪、应该怎么走。数字都是实测的，不是估的。</p>
+
+<h2>一、时序图<span>一轮订阅从头到尾发生了什么</span></h2>
+<p class="cap">五个角色：谁触发、谁去问站点、谁做判断、最后落到哪。灰虚线是「返回」。</p>
+
+<svg viewBox="0 0 1280 700" role="img" aria-label="订阅一轮的时序图">
+  <defs>
+    <marker id="ah" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+      <path d="M0,0 L8,3.2 L0,6.4 z" fill="#5b6b7c"/>
+    </marker>
+    <marker id="ahr" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+      <path d="M0,0 L8,3.2 L0,6.4 z" fill="#c0392b"/>
+    </marker>
+  </defs>
+
+  <!-- 泳道头 -->
+  <g font-size="14" text-anchor="middle" font-weight="600">
+    <rect x="30"  y="26" width="150" height="34" rx="6" fill="#eef3f8" stroke="#d3dbe4"/>
+    <text x="105" y="49">触发</text>
+    <rect x="250" y="26" width="150" height="34" rx="6" fill="#e8f0fb" stroke="#c6d8ee"/>
+    <text x="325" y="49">订阅（一轮）</text>
+    <rect x="470" y="26" width="150" height="34" rx="6" fill="#eef3f8" stroke="#d3dbe4"/>
+    <text x="545" y="49">四个站点</text>
+    <rect x="690" y="26" width="150" height="34" rx="6" fill="#eaf7ef" stroke="#c3e3cf"/>
+    <text x="765" y="49">筛子（唯一判断）</text>
+    <rect x="910" y="26" width="180" height="34" rx="6" fill="#eef3f8" stroke="#d3dbe4"/>
+    <text x="1000" y="49">落地（队列 + 记录）</text>
+  </g>
+
+  <!-- 生命线 -->
+  <g stroke="#d3dbe4" stroke-width="1.5" stroke-dasharray="4 5">
+    <line x1="105" y1="60" x2="105" y2="672"/>
+    <line x1="325" y1="60" x2="325" y2="672"/>
+    <line x1="545" y1="60" x2="545" y2="672"/>
+    <line x1="765" y1="60" x2="765" y2="672"/>
+    <line x1="1000" y1="60" x2="1000" y2="672"/>
+  </g>
+
+  <g font-size="13.5" fill="#1c2530">
+    <!-- ① 触发 -->
+    <line x1="105" y1="118" x2="317" y2="118" stroke="#5b6b7c" stroke-width="1.6" marker-end="url(#ah)"/>
+    <text x="115" y="111">① 到点了？（已启用 且 距上次 ≥ 间隔）</text>
+
+    <!-- ② 去搜 -->
+    <line x1="325" y1="172" x2="537" y2="172" stroke="#5b6b7c" stroke-width="1.6" marker-end="url(#ah)"/>
+    <text x="335" y="165">② 拿词 1 去站 1 搜第 1 页</text>
+    <text x="335" y="188" fill="#5b6b7c" font-size="12.5">（用站点自己的「相关度」排序，不是下载量）</text>
+
+    <!-- ③ 返回 -->
+    <line x1="545" y1="236" x2="333" y2="236" stroke="#5b6b7c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+    <text x="355" y="229">③ 回来 20 条 —— 大半跟这个词没关系</text>
+
+    <!-- ④ 粗筛（自处理框） -->
+    <rect x="205" y="262" width="240" height="46" rx="8" fill="#f6f8fa" stroke="#c6d8ee"/>
+    <text x="325" y="281" text-anchor="middle">④ 四道粗筛</text>
+    <text x="325" y="299" text-anchor="middle" font-size="12" fill="#5b6b7c">重复 / 门槛 / 库里已有 / 正在跑</text>
+
+    <!-- ⑤ 送审 -->
+    <line x1="325" y1="344" x2="757" y2="344" stroke="#5b6b7c" stroke-width="1.6" marker-end="url(#ah)"/>
+    <text x="335" y="337">⑤ 剩下的，逐条送审</text>
+
+    <!-- ⑥ 判断（自处理框，绿色） -->
+    <rect x="645" y="370" width="240" height="52" rx="8" fill="#eaf7ef" stroke="#1e8449" stroke-width="1.6"/>
+    <text x="765" y="391" text-anchor="middle" font-weight="600">⑥ 纸上找词</text>
+    <text x="765" y="409" text-anchor="middle" font-size="12" fill="#1e8449">标题 + 标签 + 作者，词表逐个找</text>
+
+    <!-- ⑦ 结论 -->
+    <line x1="765" y1="452" x2="333" y2="452" stroke="#5b6b7c" stroke-width="1.6" stroke-dasharray="5 4" marker-end="url(#ah)"/>
+    <text x="355" y="445">⑦ 找到 → 命中（记下是哪个词对上的）；找不到 → 丢</text>
+
+    <!-- ⑧ 循环 -->
+    <rect x="205" y="478" width="240" height="30" rx="8" fill="#f6f8fa" stroke="#c6d8ee"/>
+    <text x="325" y="498" text-anchor="middle" font-size="13">⑧ 下一个词（回到 ②）</text>
+
+    <!-- ⑨ 排序截断 -->
+    <rect x="205" y="530" width="240" height="46" rx="8" fill="#f6f8fa" stroke="#c6d8ee"/>
+    <text x="325" y="549" text-anchor="middle">⑨ 全搜完才排序</text>
+    <text x="325" y="567" text-anchor="middle" font-size="12" fill="#5b6b7c">按下载量 → 砍到每轮上限</text>
+
+    <!-- ⑩ 入队 -->
+    <line x1="325" y1="610" x2="992" y2="610" stroke="#5b6b7c" stroke-width="1.6" marker-end="url(#ah)"/>
+    <text x="335" y="603">⑩ 入队下载（一个 60–120 秒，不抢带宽）</text>
+
+    <!-- ⑪ 记账 -->
+    <line x1="325" y1="648" x2="992" y2="648" stroke="#5b6b7c" stroke-width="1.6" marker-end="url(#ah)"/>
+    <text x="335" y="641">⑪ 追加命中记录 + 记五个数：搜了几次 / 捞回几条 / 筛掉几条 / 留下几条 / 砍掉几条</text>
+
+    <!-- 停止分支 -->
+    <line x1="105" y1="440" x2="205" y2="440" stroke="#c0392b" stroke-width="1.6" marker-end="url(#ahr)"/>
+    <text x="40" y="418" fill="#c0392b" font-size="12.5">随时点「停止」</text>
+    <text x="40" y="435" fill="#c0392b" font-size="12.5">→ 下个词之前收手</text>
+    <text x="40" y="470" fill="#c0392b" font-size="12.5">已搜到的只记历史</text>
+    <text x="40" y="487" fill="#c0392b" font-size="12.5">不再入库</text>
+  </g>
+</svg>
+
+<h2>二、示意图<span>现在 vs 应该，同一批数据走两遍</span></h2>
+<p class="cap">左边是现在的代码，右边是改完的样子。红色是出错的三处，绿色是唯一真正做判断的那一处。</p>
+
+<svg viewBox="0 0 1280 560" role="img" aria-label="现在的流程与应该的流程对比">
+  <defs>
+    <marker id="ag" markerWidth="9" markerHeight="9" refX="8" refY="3.2" orient="auto">
+      <path d="M0,0 L8,3.2 L0,6.4 z" fill="#8a99a8"/>
+    </marker>
+  </defs>
+
+  <g font-size="15" font-weight="600">
+    <text x="300" y="30" text-anchor="middle" fill="#c0392b">现在（错的）</text>
+    <text x="890" y="30" text-anchor="middle" fill="#1e8449">应该（对的）</text>
+  </g>
+
+  <!-- 左列 -->
+  <g font-size="14">
+    <rect x="90" y="52" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="300" y="79" text-anchor="middle">站点返回 N 条（大部分不相干）</text>
+    <line x1="300" y1="96" x2="300" y2="112" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="90" y="112" width="420" height="44" rx="8" fill="#fdecea" stroke="#c0392b" stroke-width="1.6"/>
+    <text x="300" y="139" text-anchor="middle" fill="#c0392b">全收，中间不做任何判断 ✗</text>
+    <line x1="300" y1="156" x2="300" y2="172" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="90" y="172" width="420" height="44" rx="8" fill="#fdecea" stroke="#c0392b" stroke-width="1.6"/>
+    <text x="300" y="199" text-anchor="middle" fill="#c0392b">按下载量重排，打乱站点的相关度 ✗</text>
+    <line x1="300" y1="216" x2="300" y2="232" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="90" y="232" width="420" height="44" rx="8" fill="#fdecea" stroke="#c0392b" stroke-width="1.6"/>
+    <text x="300" y="259" text-anchor="middle" fill="#c0392b">砍到每轮上限，真命中被一起砍掉 ✗</text>
+    <line x1="300" y1="276" x2="300" y2="292" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="90" y="292" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="300" y="319" text-anchor="middle">入库</text>
+
+    <text x="90" y="372" fill="#5b6b7c" font-size="13">实测：698 条命中里 418 条跟关键字毫无关系</text>
+    <text x="90" y="394" fill="#5b6b7c" font-size="13">LABUBU 一轮 28 次搜索、30 条命中，真命中 0 条</text>
+    <text x="90" y="416" fill="#5b6b7c" font-size="13">那 7 个真模型全埋在第 2 页和被砍掉的 189 条里</text>
+  </g>
+
+  <!-- 右列 -->
+  <g font-size="14">
+    <rect x="680" y="52" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="890" y="79" text-anchor="middle">站点返回 N 条（大部分不相干）</text>
+    <line x1="890" y1="96" x2="890" y2="112" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="680" y="112" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="890" y="139" text-anchor="middle">四道粗筛：重复 / 门槛 / 库里已有 / 正在跑</text>
+    <line x1="890" y1="156" x2="890" y2="172" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="680" y="172" width="420" height="52" rx="8" fill="#eaf7ef" stroke="#1e8449" stroke-width="2"/>
+    <text x="890" y="194" text-anchor="middle" font-weight="600" fill="#1e8449">纸上找词 ✓</text>
+    <text x="890" y="213" text-anchor="middle" font-size="12.5" fill="#1e8449">标题+标签+作者 里有没有词表里的词</text>
+    <line x1="890" y1="224" x2="890" y2="240" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="680" y="240" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="890" y="267" text-anchor="middle">按下载量排（这时池子里已经干净了）</text>
+    <line x1="890" y1="284" x2="890" y2="300" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="680" y="300" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="890" y="327" text-anchor="middle">砍到每轮上限</text>
+    <line x1="890" y1="344" x2="890" y2="360" stroke="#8a99a8" stroke-width="1.6" marker-end="url(#ag)"/>
+
+    <rect x="680" y="360" width="420" height="44" rx="8" fill="#f6f8fa" stroke="#d3dbe4"/>
+    <text x="890" y="387" text-anchor="middle">入库</text>
+
+    <text x="680" y="440" fill="#5b6b7c" font-size="13">同一批 698 条按新规矩过一遍：留 280 条</text>
+    <text x="680" y="462" fill="#5b6b7c" font-size="13">留下的按定义全对：皮卡丘 108 条一条不丢</text>
+    <text x="680" y="484" fill="#5b6b7c" font-size="13">LABUBU 120 条只留 4 条，其余全是噪声</text>
+  </g>
+
+  <rect x="90" y="500" width="1010" height="44" rx="8" fill="#fff8e6" stroke="#e0b64a"/>
+  <text x="110" y="528" font-size="13.5">一句话：判断只在⑥做一次，前后都不要替它做主 —— 前面不许因为「站点说有」就信，后面不许因为「下载量高」就信。</text>
+</svg>
+
+<div class="legend">
+  <span><i style="background:#fdecea;border:1px solid #c0392b"></i>出错的三处</span>
+  <span><i style="background:#eaf7ef;border:2px solid #1e8449"></i>唯一真正的判断</span>
+  <span><i style="background:#f6f8fa;border:1px solid #d3dbe4"></i>搬运和记录</span>
+</div>
+
+<h2>三、注意点<span>按踩坑的代价从高到低</span></h2>
+<table>
+  <tr><th>#</th><th>注意点</th><th>为什么</th></tr>
+  <tr>
+    <td>1</td>
+    <td>四个站都是「拆字搜」的，别指望站点帮你筛</td>
+    <td>创想云和 MakerOnline 会把「精灵天团」拆成「精」「灵」「天」「团」四个字分别去搜，所以「第一军团」因为有个「团」、「暗黑天使」因为有个「天」就回来了；倒着写「布布拉」照样能搜出「财神拉布布」。四个站的精确匹配参数全试过，没有。</td>
+  </tr>
+  <tr>
+    <td>2</td>
+    <td>搜索时必须用站点自己的相关度排序</td>
+    <td>按下载量搜「拉布布」，第一页是「人偶娃娃可动」「哈利波特老魔杖」；按相关度搜，第一条就是「财神拉布布」。用错排序等于把真东西压到后面几页，自己给自己加难度。</td>
+  </tr>
+  <tr>
+    <td>3</td>
+    <td>先筛，后砍</td>
+    <td>现在是先按下载量排、砍到 30、剩下的才入库，结果 219 条候选里真命中全在砍掉的 189 条里。顺序反了，前面做得再对也没用。</td>
+  </tr>
+  <tr>
+    <td>4</td>
+    <td>英文要整词对，中文直接找</td>
+    <td><span class="kbd">40k</span> 不该算命中 <span class="kbd">140k</span>，<span class="kbd">bb8</span> 不该算命中 <span class="kbd">bb800</span>。大小写不区分。中文没有词边界，直接找就行。</td>
+  </tr>
+  <tr>
+    <td>5</td>
+    <td>不做拼音纠错、不做「长得像」</td>
+    <td>各种写法应该在词表里写死（拉布布 / 拉不布 / labubu / lafufu）。用模糊匹配去猜，等于把词表的活交给算法干，噪声会重新漏回来。</td>
+  </tr>
+  <tr>
+    <td>6</td>
+    <td>词表要写全「同一个东西的各种叫法」，这是漏检第一原因</td>
+    <td>创想云上确实有 7 个 LABUBU 模型，其中 4 个标题写的是 <span class="kbd">lafufu</span>（仿品写法），词表里没这个词，所以永远搜不到。补上它，比改十行代码有用。</td>
+  </tr>
+  <tr>
+    <td>7</td>
+    <td>每页先翻 1 页，筛完 0 条才翻第 2 页</td>
+    <td>无脑多翻页会拖垮限速（一轮二十多次搜索，翻三页就三个多小时，而订阅是每 4–8 小时一轮）。词表写全之后第 1 页基本够，兜底规则只在真的颗粒无收时才花这个钱。</td>
+  </tr>
+  <tr>
+    <td>8</td>
+    <td>命中记录要写「因为哪个词算命中」，不是「用哪个词搜的」</td>
+    <td>搜「拉不布」找到「财神拉布布」是对的，记录写「拉不布」你看着又像错了。两个都存，界面显示前者，出问题时才看得出是词表漏了还是筛子松了。</td>
+  </tr>
+  <tr>
+    <td>9</td>
+    <td>旧记录一条都不删、不改</td>
+    <td>盘上是历史，改了就是造假。读的时候套同一套规矩过一遍，默认只显示对的。以后改词表还能重算——旧记录反而成了可复用的样本。</td>
+  </tr>
+  <tr>
+    <td>10</td>
+    <td>「停止」要在词与词之间生效</td>
+    <td>一轮要跑几十分钟，只在开头判断一次等于点了没反应。现在改成每个词开头看一眼开关，停下后已搜到的只记历史、不再入队。</td>
+  </tr>
+  <tr>
+    <td>11</td>
+    <td>限速不能省</td>
+    <td>站点之间 60–120 秒、站内每个文件再歇 5–10 秒。被封站比慢一天贵得多。所以「多翻页」「多搜词」都是有成本的，不能随便加。</td>
+  </tr>
+  <tr>
+    <td>12</td>
+    <td>每轮必须记五个数</td>
+    <td>搜了几次 / 捞回几条 / 筛掉几条 / 留下几条 / 砍掉几条。留下 0 条时先怀疑词表缺写法，不是筛子太严；筛掉比例很低说明这个词很干净，可以放心用。</td>
+  </tr>
+</table>
+
+<h2>四、要改的地方<span>一共四处，外加一件数据活</span></h2>
+<table>
+  <tr><th>#</th><th>改哪</th><th>改什么</th></tr>
+  <tr><td>1</td><td class="kbd">subs.mjs</td><td>在捞回来的那一步加「纸上找词」，命中才进池子。这是唯一的新逻辑。</td></tr>
+  <tr><td>2</td><td class="kbd">subs.mjs</td><td>把「砍」挪到「筛」后面。</td></tr>
+  <tr><td>3</td><td class="kbd">search.mjs</td><td>MakerWorld 现在用的是下载量排序，换成站点自己的相关度；其余三站已经是相关度。</td></tr>
+  <tr><td>4</td><td class="kbd">subs.mjs</td><td>读旧记录时套同一套规矩；界面那一列换成「因为哪个词算命中」。</td></tr>
+  <tr><td>+</td><td class="kbd">data/ipwatch.json</td><td>词表补 <span class="kbd">lafufu</span> 这类仿品写法。不是代码活，但收益最大。</td></tr>
+</table>
+
+<footer>数字来源：<span class="kbd">data/subs/*.jsonl</span> 全量 698 条命中逐条核对，加上四站实时探测。生成于 2026-10-30。</footer>
+
+</main>
+</body>
+</html>

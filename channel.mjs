@@ -12,6 +12,9 @@ export const DOMAINS = {
   makerworld: ['makerworld.com', 'makerworld.com.cn'],
   snapmaker: ['snapmaker.cn', 'snapmaker.com'],
   makeronline: ['makeronline.com', 'makeronline.cn'],
+  // .cn 与 .com 是两套登录态，各自取各自的 cookie，绝不合进同一个请求头（spec §7）
+  'makeronline.cn': ['makeronline.cn'],
+  'makeronline.com': ['makeronline.com'],
 };
 
 let browser = null;
@@ -78,7 +81,8 @@ export async function cookieHeader(site, force = false) {
   const all = await cookies(force);
   if (!all) return null;
   const domains = DOMAINS[site] || [];
-  const mine = all.filter((c) => domains.some((d) => c.domain === d || c.domain === '.' + d || c.domain.endsWith(d)));
+  // 只认同域或子域：`endsWith(d)` 会让 evil-makeronline.cn 也混进来
+  const mine = all.filter((c) => domains.some((d) => c.domain === d || c.domain === '.' + d || c.domain.endsWith('.' + d)));
   return mine.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 

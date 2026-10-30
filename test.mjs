@@ -247,9 +247,15 @@ test('站点包与公共层认同一个网址，包认不出就交回 matchPlatf
   // 已经搬进包的站，包和公共层认的是同一个 id
   const c = sites.match('https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7');
   assert.deepEqual([c.name, c.id], ['creality', '68fddae0d894ed5f6ce386a7']);
+  // MakerOnline 两个域各自成包，数据键都是 makeronline（库目录/判重键不分域）
+  const cn = sites.match('https://www.makeronline.cn/zh/model/x/207581.html');
+  assert.deepEqual([cn.name, cn.id], ['makeronline.cn', '207581']);
+  assert.equal(sites.byName('makeronline.cn').platform, 'makeronline');
+  // 订阅/搜索沿用旧键 makeronline，要落到 .cn 这个包上
+  assert.equal(sites.byName('makeronline').site, 'makeronline.cn');
   // 还没搬进包的站，包不认、公共层仍认（迁移期两条路并存）
-  assert.equal(sites.match('https://www.makeronline.cn/zh/model/x/207581.html'), null);
-  assert.equal(matchPlatform('https://www.makeronline.cn/zh/model/x/207581.html')?.name, 'makeronline');
+  assert.equal(sites.match('https://www.makeronline.com/zh/model/x/341770.html'), null);
+  assert.equal(matchPlatform('https://www.makeronline.com/zh/model/x/341770.html')?.name, 'makeronline');
 });
 
 test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () => {

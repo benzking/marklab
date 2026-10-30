@@ -11,20 +11,11 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ROOT, matchPlatform, sanitize, slugify, autoTags, writeJson, fmtHours } from './lib.mjs';
-import { evalInPage, browserConnected, fetchAs, closePages } from './channel.mjs';
+import { ROOT, sanitize, slugify, autoTags, writeJson } from './lib.mjs';
+import { browserConnected, fetchAs, closePages } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
-
-// 签名链接里的 % 偶尔不合法，decode 抛错不该让整份文件列表失败
-const safeDecode = (s) => {
-  try {
-    return decodeURIComponent(s);
-  } catch {
-    return String(s);
-  }
-};
 
 // 没下到文件时给控制台看的原因
 const NO_FILES_TEXT = {
@@ -98,183 +89,25 @@ async function download(target, dest, site) {
   throw lastErr;
 }
 
-// ── 还没搬进站点包的适配器（票 04–05 搬完这张表就空了）────────────────
-
-// MakerOnline（纵维立方）：Nuxt 2，页面里 window.__NUXT__ 是 IIFE 打包的数据。
-// 绝不在服务端求值它——那等于让站点在我们的进程里执行任意代码（实测能拿到 process）。
-// 改成在浏览器页内读出模型那一段，只把 JSON 结果传回来。
-const makeronline = {
-  async meta(id, pageUrl) {
-    const canonical = pageUrl;
-    const { value } = await evalInPage(canonical, () => {
-      const m = window.__NUXT__?.data?.[0]?.modelDetailData;
-      return m ? JSON.stringify(m) : null;
-    });
-    if (!value) throw new Error('__NUXT__ 里没有 modelDetailData（站点结构变了，或没登录）');
-    const m = JSON.parse(value);
-
-    const profile = (m.print_profiles || [])[0] || {};
-    const rgb = (v) =>
-      '#' +
-      String(v || '0,0,0')
-        .split(',')
-        .map((x) => Number(x).toString(16).padStart(2, '0'))
-        .join('');
-    // "26h26m" → 秒
-    const secs = (s) => {
-      const mm = /(?:(\d+)h)?(?:(\d+)m)?/.exec(String(s || ''));
-      return mm && (mm[1] || mm[2]) ? Number(mm[1] || 0) * 3600 + Number(mm[2] || 0) * 60 : null;
-    };
-    const machines = String(profile.printer_label || '')
-      .split(/[、,，]/)
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map((name) => ({ name }));
-    const plateList = (profile.files || []).map((f, idx) => ({
-      name: `第 ${idx + 1} 盘`,
-      timeText: fmtHours(secs(f.print_time)) || f.print_time || '',
-      timeSec: secs(f.print_time),
-      weightG: (f.materials || []).reduce((a, x) => a + (Number(x.filament_used_g) || 0), 0) || null,
-      thumb: f.thumbnail || null,
-      filaments: (f.materials || []).map((x) => ({ type: x.material_type, color: rgb(x.paint_color), usedG: x.filament_used_g })),
-    }));
-    const downloadName = profile.download?.file_name || `${m.title}.3mf`;
-    // 打印配置带 is_author（页面上那个「Designer」徽标）：别人传的配置不算作者件，不参与比 hash
-    const profileByAuthor = profile.is_author !== false;
-    const fileOrigin = profileByAuthor ? 'author' : 'other';
-
-    const site = /makeronline\.cn/i.test(canonical) ? 'cn' : 'com';
-    const rawFiles = (m.files || []).map((f) => ({
-      name: f.file_name || 'model',
-      size: f.file_size,
-      format: (String(f.file_name || '').match(/\.(\w+)$/) || [, ''])[1].toLowerCase(),
-      private: true,
-      origin: 'author',
-    }));
-
-    return {
-      platform: 'makeronline',
-      site,
-      id,
-      sourceUrl: canonical,
-      title: m.title,
-      author: m.user_display_name || m.user_name || '',
-      authorAvatar: m.user_avatar || '',
-      description: sanitize(m.desc),
-      images: (m.images || []).map((x) => x.url).filter(Boolean),
-      stats: { downloads: m.download_num },
-      picked: Boolean(m.contest_winner?.is_winner),
-      category: (m.categories || []).map((c) => c.name).join(' / '),
-      tags: m.tags || [],
-      publishedAt: m.publish_time || null,
-      print: profile.id
-        ? {
-            profileTitle: profile.title || '默认打印配置',
-            thumb: profile.main_thumb_image || profile.main_image || null,
-            timeText: fmtHours(secs(profile.print_time_label)) || profile.print_time_label || '',
-            timeSec: secs(profile.print_time_label),
-            weightG: Math.round((profile.materials_label || []).reduce((a, x) => a + (Number(x.filament_used_g) || 0), 0) * 10) / 10 || null,
-            plates: profile.plate_count || plateList.length,
-            nozzle: profile.nozzle ? `${profile.nozzle} mm` : '',
-            filaments: (profile.materials_label || []).map((x) => ({
-              type: x.material_type,
-              color: rgb(x.paint_color),
-              usedG: x.filament_used_g,
-            })),
-            plateList,
-            machines,
-            source: 'ssr',
-          }
-        : null,
-      profiles: profile.id
-        ? [{
-            id: profile.id,
-            name: profile.title || '默认打印配置',
-            machine: machines[0]?.name || '',
-            machines: machines.map((x) => x.name),
-            plates: profile.plate_count || plateList.length,
-            plateList,
-            timeSec: secs(profile.print_time_label),
-            timeText: fmtHours(secs(profile.print_time_label)),
-            weightG: Math.round((profile.materials_label || []).reduce((a, x) => a + (Number(x.filament_used_g) || 0), 0) * 10) / 10,
-            nozzle: profile.nozzle ? `${profile.nozzle} mm` : '',
-            layerHeight: '', wallLoops: '', infill: '', bed: '',
-            size: profile.total_size || 0,
-            filaments: (profile.materials_label || []).map((x) => ({ type: x.material_type, color: rgb(x.paint_color), usedG: x.filament_used_g })),
-            thumbnail: profile.main_thumb_image || '',
-            isDefault: true,
-            isAuthor: profileByAuthor,
-            creatorUid: profile.user_id ?? null,
-            url: canonical,
-          }]
-        : [],
-      files: profile.id
-        ? [{ name: downloadName, format: (downloadName.match(/\.(\w+)$/) || [])[1] || '3mf', size: profile.total_size, origin: fileOrigin }]
-        : [],
-      rawFiles,
-      docs: (m.docs || []).map((d) => ({
-        name: d.file_name,
-        size: d.file_size,
-        format: (String(d.file_name || '').match(/\.(\w+)$/) || [, ''])[1].toLowerCase(),
-        private: true,
-      })),
-      fileIds: profile.id ? [profile.id] : [],
-    };
-  },
-  // 下载要登录：在页面里点「下载 → 下载全部」，截获它创建的链接
-  async fileLinks(model) {
-    const js = `(async () => {
-      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-      const got = [];
-      const oc = HTMLAnchorElement.prototype.click;
-      HTMLAnchorElement.prototype.click = function () { if (this.href) got.push(this.href); };
-      const ow = window.open;
-      window.open = function (u) { if (u) got.push(String(u)); return null; };
-      const btn = document.querySelector('.print-download-button button') ||
-        [...document.querySelectorAll('button')].find((b) => /下载|Download/i.test(b.innerText || ''));
-      if (!btn) { HTMLAnchorElement.prototype.click = oc; window.open = ow; return { error: '页面上找不到下载按钮' }; }
-      try {
-        btn.click();
-        await sleep(1600);
-        const all = [...document.querySelectorAll('.el-dialog button')].find((b) => /下载全部|Download all/i.test(b.innerText || ''));
-        if (all) { all.click(); await sleep(6000); }
-      } finally {
-        // 常驻页是共用的，抛错也必须把 monkeypatch 还回去，否则后面所有点击都被劫持
-        HTMLAnchorElement.prototype.click = oc; window.open = ow;
-      }
-      const login = [...document.querySelectorAll('.el-dialog')].some((d) => /登录|Log in|Sign in/i.test(d.innerText || '') && d.offsetParent !== null);
-      return { urls: [...new Set(got)].filter((u) => /^https?:/.test(u)), loginRequired: login && got.length === 0 };
-    })()`;
-    const { value: res } = await evalInPage(model.sourceUrl, js, { wait: 6000 });
-    if (res.error) throw new Error(res.error);
-    if (!res.urls.length) {
-      throw new Error(res.loginRequired ? '下载需要登录：先在浏览器登录 makeronline' : '没截到下载链接（站点可能改了下载流程）');
-    }
-    return res.urls.map((u, i) => {
-      // 签名链接的 response-content-disposition 里带着原始文件名
-      const m = /filename=(?:UTF-8'')?([^&;]+)/i.exec(safeDecode(u));
-      const name = (m && safeDecode(m[1].replace(/\+/g, ' '))) || `${(model.files[0]?.name || 'model').replace(/\.\w+$/, '')}${i ? '-' + (i + 1) : ''}.3mf`;
-      return { name, url: u, size: model.files[0]?.size, kind: 'profile' };
-    });
-  },
-};
-
-// 还没搬进站点包的站（票 04–05 逐个搬走，搬完这张表就空了）
-const ADAPTERS = { makeronline };
-
 // ── 主流程 ──────────────────────────────────────────────────────
-// 先问站点包（sites/index.mjs），包不认再退回旧适配器表
-const hit = sites.match(url) || matchPlatform(url);
+// 认网址只问站点包（sites/index.mjs）；认不出就拒，不再猜
+const hit = sites.match(url);
 if (!hit) {
   console.error('暂不支持的站点。目前支持：\n  space.snapmaker.cn / crealitycloud.cn / makerworld.com.cn / makeronline.cn|com');
   process.exit(2);
 }
 
-const { name: platform, id } = hit;
-const pack = sites.byName(platform);
-const adapter = pack || ADAPTERS[platform];
-progress({ phase: 'fetching', site: platform, id });
-const model = pack ? await pack.meta(hit.url) : await ADAPTERS[platform].meta(id, hit.url);
+// platform 是数据命名空间（库目录、判重键）：MakerOnline 的 .cn/.com 共用一个；
+// site 是站点键（浏览器 cookie、登录态、日志）：两个域各自独立。
+const { name: site, id } = hit;
+const pack = sites.byName(site);
+if (!pack) {
+  console.error(`站点包没登记：${site}（sites/index.mjs）`);
+  process.exit(2);
+}
+const platform = pack.platform || site;
+progress({ phase: 'fetching', site, id });
+const model = await pack.meta(hit.url);
 model.fetchedAt = new Date().toISOString();
 progress({ phase: 'parsing', title: model.title });
 
@@ -333,7 +166,7 @@ const saved = [];
 let linkErr = '';
 if (wantFiles) {
   try {
-    const links = await adapter.fileLinks(model);
+    const links = await pack.fileLinks(model);
     progress({ phase: 'downloading', done: 0, total: links.length });
     for (const [i, f] of links.entries()) {
       if (i > 0) await fileGap();
@@ -341,7 +174,7 @@ if (wantFiles) {
       const name = `${String(i + 1).padStart(2, '0')}-${slugify(f.name.replace(/\.\w+$/, ''))}.${ext}`;
       // 单个文件失败不拖累其余：48 个 STL 的模型不能因为第 3 个挂了就全丢
       try {
-        const { bytes, sha256 } = await download(f.url, path.join(filesDir, name), platform);
+        const { bytes, sha256 } = await download(f.url, path.join(filesDir, name), site);
         saved.push({ name: f.name, path: `files/${name}`, bytes, sha256, kind: f.kind || 'model', origin: f.origin || 'author' });
         console.log(`  ✓ ${f.name} (${(bytes / 1048576).toFixed(1)} MB)`);
       } catch (e) {

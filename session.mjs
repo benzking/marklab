@@ -6,22 +6,8 @@ import * as sites from './sites/index.mjs';
 // 顺序就是控制台里的显示顺序；标签优先取站点包自己的
 const ORDER = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com'];
 
-// 还没搬进站点包的站：token cookie 名 + 鉴权接口。票 04–05 搬完这张表就空了。
+// 还没搬进站点包的站：token cookie 名 + 鉴权接口。票 05 搬完这张表就空了。
 const PROBES = {
-  'makeronline.cn': {
-    label: 'MakerOnline.cn',
-    host: 'https://www.makeronline.cn',
-    tokenCookie: 'mo_access_token',
-    async run(cookieMap, host) {
-      const r = await ch.fetchAs('makeronline', `${host}/api/user/personal/info`, {
-        headers: { authorization: cookieMap.mo_access_token || '' }, // 裸 token，不带 Bearer
-      });
-      if (!r) return offline();
-      const j = await r.json().catch(() => null);
-      const u = j?.data || j?.result;
-      return r.ok && u?.user_name ? { ok: true, name: u.user_display_name || u.user_name } : { ok: false, status: 'logged-out' };
-    },
-  },
   'makeronline.com': {
     label: 'MakerOnline.com',
     host: 'https://www.makeronline.com',
@@ -55,10 +41,11 @@ export async function probe(site) {
   try {
     const all = await ch.cookies();
     if (!all) return { site, label: cfg.label, ...offline() };
-    const domains = ch.DOMAINS[site === 'makeronline.cn' || site === 'makeronline.com' ? 'makeronline' : site] || [];
+    const domains = ch.DOMAINS[site] || [];
     const cookieMap = {};
     for (const c of all) {
-      if (domains.some((d) => c.domain === d || c.domain === '.' + d || c.domain.endsWith(d))) cookieMap[c.name] = c.value;
+      // 只认同域或子域：`.cn` 与 `.com` 是两套登录态，混进来会认错人（spec §7）
+      if (domains.some((d) => c.domain === d || c.domain === '.' + d || c.domain.endsWith('.' + d))) cookieMap[c.name] = c.value;
     }
     if (cfg.tokenCookie && !cookieMap[cfg.tokenCookie]) {
       return { site, label: cfg.label, ok: false, status: 'logged-out' };
