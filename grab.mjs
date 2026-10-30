@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ROOT, sanitize, slugify, autoTags, writeJson } from './lib.mjs';
-import { browserConnected, fetchAs, closePages } from './channel.mjs';
+import { connectionState, fetchAs, closePages } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
@@ -252,5 +252,6 @@ console.log(`  目录  ${path.relative(ROOT, dir)}`);
 console.log(`  文件  ${model.savedFiles.length} 个（本次新下 ${saved.length}）· 图片 ${localImages.length} 张`);
 if (model.print) console.log(`  打印  ${model.print.timeText} · ${model.print.weightG} g · ${model.print.plates} 盘 · ${model.print.filaments.length} 种耗材`);
 if (model.autoTags?.length) console.log(`  标签  ${model.autoTags.join(' / ')}`);
-if (!browserConnected()) console.log('  ⚠ 浏览器没连上：需要登录态的站点下不了文件');
+// 只有「试过但没连上」才提示；整个流程没碰浏览器（直链下载）不算失败
+if (connectionState() === false) console.log('  ⚠ 浏览器没连上：需要登录态的站点下不了文件');
 await exit(0);

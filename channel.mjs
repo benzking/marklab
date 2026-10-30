@@ -16,6 +16,61 @@ export const DOMAINS = {
   'makeronline.com': ['makeronline.com'],
 };
 
+const withTimeout = (p, ms, what) =>
+  Promise.race([
+    p,
+    new Promise((_, rej) => setTimeout(() => rej(new Error(`${what}超时（${ms / 1000} 秒）`)), ms)),
+  ]);
+
+// ── 单写者闸门（spec §8.1）──
+// 实测：两个 connectOverCDP 并发就两个都超时，5 个并发时 4/5 的页面 goto 超时，
+// 还会把常驻连接拖死。所以所有要浏览器的调用排一条队，全局并发 1，各站轮转。
+const waiters = new Map(); // site -> [resolve]
+let busy = false;
+let gateCursor = 0;
+
+function acquire(site) {
+  if (!busy) {
+    busy = true;
+    return Promise.resolve();
+  }
+  return new Promise((res) => {
+    const l = waiters.get(site) || [];
+    l.push(res);
+    waiters.set(site, l);
+  });
+}
+
+function release() {
+  const keys = [...waiters.keys()];
+  if (!keys.length) {
+    busy = false;
+    return;
+  }
+  // 轮转交接：从上次放行的下一个站开始找，别让一个站一直霸着
+  for (let i = 0; i < keys.length; i++) {
+    const idx = (gateCursor + i) % keys.length;
+    const l = waiters.get(keys[idx]);
+    if (!l?.length) continue;
+    gateCursor = (idx + 1) % keys.length;
+    const next = l.shift();
+    if (!l.length) waiters.delete(keys[idx]);
+    next(); // busy 保持 true，直接把闸门交给它
+    return;
+  }
+  busy = false;
+}
+
+/** 所有要浏览器的动作都从这里过：全局并发 1，站间轮转。 */
+async function withBrowser(site, fn) {
+  await acquire(site);
+  try {
+    return await fn();
+  } finally {
+    release();
+  }
+}
+
 let browser = null;
 let connecting = null;
 let up = null; // 上次连接结果，给同步的 browserConnected() 用
@@ -66,18 +121,22 @@ async function context() {
 }
 
 /** 全量 cookie（含 HttpOnly），内存缓存。force=true 跳过缓存（401 时用）。 */
-export async function cookies(force = false) {
+async function rawCookies(force = false) {
   if (!force && cookiesCache && Date.now() - cookiesAt < COOKIE_TTL) return cookiesCache;
   const ctx = await context();
   if (!ctx) return null;
-  cookiesCache = await ctx.cookies();
+  cookiesCache = await withTimeout(ctx.cookies(), 15_000, '取 cookie ');
   cookiesAt = Date.now();
   return cookiesCache;
 }
 
+export async function cookies(force = false) {
+  return withBrowser('_', () => rawCookies(force));
+}
+
 /** 某站的 cookie 头，给 node fetch 用。没连上返回 null。 */
-export async function cookieHeader(site, force = false) {
-  const all = await cookies(force);
+async function rawCookieHeader(site, force = false) {
+  const all = await rawCookies(force);
   if (!all) return null;
   const domains = DOMAINS[site] || [];
   // 只认同域或子域：`endsWith(d)` 会让 evil-makeronline.cn 也混进来
@@ -85,34 +144,46 @@ export async function cookieHeader(site, force = false) {
   return mine.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
+export async function cookieHeader(site, force = false) {
+  return withBrowser(site, () => rawCookieHeader(site, force));
+}
+
 /** 某站的常驻页（同 context 共享登录态）。用户关掉了就重建。 */
-export async function page(site) {
+async function rawPage(site) {
   const p = pages.get(site);
   if (p && !p.isClosed()) return p;
   const ctx = await context();
   if (!ctx) return null;
-  const np = await ctx.newPage();
+  const np = await withTimeout(ctx.newPage(), 20_000, '开标签页 ');
   pages.set(site, np);
   return np;
 }
 
+export async function page(site) {
+  return withBrowser(site, () => rawPage(site));
+}
+
 /** 真浏览器取页：导航 + 等 DOM 就绪 + 取内容。MakerWorld 走这条。 */
 export async function goto(site, url, { waitUntil = 'domcontentloaded', timeout = 30000 } = {}) {
-  const p = await page(site);
-  if (!p) return null;
-  const r = await p.goto(url, { waitUntil, timeout });
-  return { page: p, status: r?.status() ?? 0, html: await p.content() };
+  return withBrowser(site, async () => {
+    const p = await rawPage(site);
+    if (!p) return null;
+    const r = await p.goto(url, { waitUntil, timeout });
+    return { page: p, status: r?.status() ?? 0, html: await p.content() };
+  });
 }
 
 /** 在页内跑函数（同源 fetch / 读 window 上的数据），不新开页。fn 可以是函数或 JS 字符串。 */
-export async function inPage(site, url, fn, arg, { wait = 0 } = {}) {
-  const p = await page(site);
-  if (!p) return null;
-  if (url && p.url() !== url) {
-    await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
-    if (wait) await new Promise((r) => setTimeout(r, wait)); // 等 hydrate，数据和按钮才挂上
-  }
-  return p.evaluate(fn, arg);
+export async function inPage(site, url, fn, arg, { wait = 0, timeout = 60_000 } = {}) {
+  return withBrowser(site, async () => {
+    const p = await rawPage(site);
+    if (!p) return null;
+    if (url && p.url() !== url) {
+      await p.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      if (wait) await new Promise((r) => setTimeout(r, wait)); // 等 hydrate，数据和按钮才挂上
+    }
+    return withTimeout(p.evaluate(fn, arg), timeout, '页内执行 ');
+  });
 }
 
 /** 网址 → 站点 key，认不出来返回 null。 */
@@ -131,7 +202,12 @@ export function siteOf(url) {
 
 // ── 旧接口（grab.mjs / cats.mjs 还在用这两个名字，别再复制一份通道） ──
 export function browserConnected() {
-  return up !== false; // 没连过就乐观当连上，真连不上会在 evalInPage 里报错
+  return up === true; // 没连过是 unknown，不乐观当连上（spec §7：连不上就显示「无法检测」）
+}
+
+/** 上次连接结果：true / false / null（还没试过）。控制台靠它区分「未登录」和「无法检测」。 */
+export function connectionState() {
+  return up;
 }
 
 export async function evalInPage(url, expr, { wait = 0 } = {}) {
@@ -143,15 +219,21 @@ export async function evalInPage(url, expr, { wait = 0 } = {}) {
 
 /** 带登录态的 node fetch：三站走这条，比开浏览器快且不占屏幕。force=true 重取登录态（401 后重试用）。 */
 export async function fetchAs(site, url, opts = {}, force = false) {
-  const cookie = await cookieHeader(site, force);
-  if (cookie == null) return null; // 浏览器没连上
-  const headers = { ...(opts.headers || {}), cookie };
-  return fetch(url, { ...opts, headers });
+  return withBrowser(site, async () => {
+    const cookie = await rawCookieHeader(site, force);
+    if (cookie == null) return null; // 浏览器没连上
+    const headers = { ...(opts.headers || {}), cookie };
+    return fetch(url, { ...opts, headers });
+  });
 }
 
 /** 只断开我们的引用，绝不关用户的浏览器、绝不关用户开的标签。 */
 /** 关掉本进程开的标签页。抓取子进程退出前必须调，否则会往用户 Chrome 里一直堆标签。 */
 export async function closePages() {
+  return withBrowser('_', () => rawClosePages());
+}
+
+async function rawClosePages() {
   const list = [...pages.values()].filter((p) => !p.isClosed());
   pages.clear();
   if (!list.length) return;
@@ -160,7 +242,7 @@ export async function closePages() {
     const ctx = list[0].context();
     if (ctx) {
       const alive = ctx.pages().filter((p) => !p.isClosed());
-      if (alive.length <= list.length) await ctx.newPage();
+      if (alive.length <= list.length) await withTimeout(ctx.newPage(), 10_000, '垫空白页 ');
     }
   } catch {}
   await Promise.all(list.map((p) => p.close().catch(() => {})));
@@ -193,6 +275,27 @@ function demo() {
   console.log('channel demo ok');
 }
 
+/** 自检用：闸门是不是真串行 + 站间轮转（不碰浏览器）。 */
+async function demoGate() {
+  const order = [];
+  const run = async (site, tag) => {
+    await acquire(site);
+    order.push(tag);
+    await new Promise((r) => setTimeout(r, 1));
+    release();
+  };
+  await acquire('a');
+  order.push('a1');
+  const rest = [run('a', 'a2'), run('b', 'b1'), run('a', 'a3'), run('b', 'b2')];
+  release();
+  await Promise.all(rest);
+  // 一条一个：a1 先占闸门，之后 a/b 交替，不许 a 全跑完才轮到 b
+  console.assert(order.length === 5, '五条都要跑到');
+  console.assert(order[1] === 'a2' && order[2] === 'b1', '排队里的第一条先上，之后换站');
+  console.assert(order.indexOf('b1') < order.indexOf('a3'), 'b 站不该被 a 站饿死');
+  console.log('channel gate ok', order.join(' → '));
+}
+
 if (path.basename(process.argv[1] || '') === 'channel.mjs') {
   if (process.argv.includes('--live')) {
     const b = await connect();
@@ -201,5 +304,8 @@ if (path.basename(process.argv[1] || '') === 'channel.mjs') {
     console.log('creality cookie names:', h ? h.split('; ').map((s) => s.split('=')[0]).join(',') : '(未连接)');
     forget();
     process.exit(0);
-  } else demo();
+  } else {
+    demo();
+    await demoGate();
+  }
 }
