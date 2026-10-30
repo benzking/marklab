@@ -3,19 +3,17 @@
 //
 //   node grab.mjs <url> [--no-files] [--out library]
 //
-// 三个站点的取数方式各不相同（都是实测出来的）：
-//   snapmaker  页面 SSR（必须带 -model 这种 slug）里就有完整打印配置；模型文件是私链 CDN，HTTP 直下
-//   creality   页面 SSR 里的 __NUXT_DATA__ 是 modelGroupDetail；文件要登录态
-//   makerworld 整站挡非浏览器 UA，详情与 f3mf 都必须在页面里 fetch
-// 后两个借浏览器跑页面内 JS：连的是本机常驻 Chromium（CDP 9223，ADR-0002），不 launch 新浏览器。
+// 取数方式在 sites/<站点>.mjs 里，这里只管流程：抓元数据 → 判重 → 下文件 → 落盘。
+// 站点包只暴露 match / meta / fileLinks 三个口（还有 loginState / search / userModels 给别处用）。
+// 借浏览器跑页面内 JS 的站：连的是本机常驻 Chromium（CDP 9223，ADR-0002），不 launch 新浏览器。
 
 import { mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ROOT, matchPlatform, resolveNuxt, sanitize, slugify, autoTags, writeJson, fmtHours } from './lib.mjs';
+import { ROOT, matchPlatform, sanitize, slugify, autoTags, writeJson, fmtHours } from './lib.mjs';
 import { evalInPage, browserConnected, fetchAs, closePages } from './channel.mjs';
-import { UA, httpGet } from './sites/_http.mjs';
+import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
 
@@ -99,175 +97,7 @@ async function download(target, dest, site) {
   throw lastErr;
 }
 
-// ── 站点适配器 ──────────────────────────────────────────────────
-
-// 创想云：SSR 的 __NUXT_DATA__ 就是 modelGroupDetail 的完整响应；
-// 3mf 版页面额外带 3mf-list（打印配置）与 3mf-all-printers（机型表）
-const creality = {
-  async meta(id, pageUrl) {
-    const canonical = `https://www.crealitycloud.cn/model-detail/${id}`;
-    const { text } = await httpGet(pageUrl);
-    const raw = /<script[^>]*id="__NUXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(text)?.[1];
-    if (!raw) throw new Error('页面里没有 __NUXT_DATA__（站点结构变了？）');
-    const state = resolveNuxt(JSON.parse(raw)).data;
-    const result = Object.entries(state).find(([k]) => k.startsWith('model-info'))?.[1]?.result;
-    if (!result) throw new Error('__NUXT_DATA__ 里没有 model-info');
-    const g = result.groupItem;
-
-    // 打印配置（3mf 版页面才有）
-    const rawProfiles = (Object.entries(state).find(([k]) => k.startsWith('3mf-list'))?.[1]?.list) || [];
-    const profiles = rawProfiles.map((p) => ({
-      id: p.id,
-      name: p.secondName || p.name || '打印配置',
-      title: p.name || '',
-      machine: p.printerName || '',
-      machines: p.supportPrinterNames || [],
-      plates: p.plateCount || 0,
-      timeSec: p.printTime || 0,
-      weightG: Math.round((Number(p.filamentWeight) || 0) * 10) / 10,
-      lengthM: Number(p.filamentLen) || 0,
-      size: p.size || 0,
-      layerHeight: p.layerHeight ? String(p.layerHeight) : '',
-      wallLoops: p.wallLoops ? String(p.wallLoops) : '',
-      infill: p.sparseInfillDensity != null ? String(p.sparseInfillDensity) : '',
-      nozzle: (p.nozzleDiameter || [])[0] ? `${(p.nozzleDiameter || [])[0]} mm` : '',
-      bed: p.currBedType || '',
-      downloads: p.downloadCount || 0,
-      thumbnail: p.thumbnail || '',
-      isAuth: Boolean(p.isAuth),
-      filaments: (p.colorFilament || []).map((c) => ({ type: c.type, color: c.color, usedG: Number(c.weight) || null })),
-    }));
-    // 网址上带的 profileId 优先，其次第一个已认证的
-    const wanted = /[?&]profileId=([0-9a-f]{24})/i.exec(pageUrl)?.[1];
-    const active = profiles.find((p) => p.id === wanted) || profiles.find((p) => p.isAuth) || profiles[0] || null;
-
-    // SSR 的 modelList 只有第一页（5 个），站点弹窗是走 fileListPage 拉全量，这里对齐
-    let allStl = result.modelList || [];
-    try {
-      const r = await fetch('https://www.crealitycloud.cn/api/cxy/v3/model/fileListPage', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          origin: 'https://www.crealitycloud.cn',
-          referer: canonical,
-          __cxy_app_id_: 'cxy-gen2',
-          __cxy_app_ver_: '7.3.28',
-          __cxy_platform_: '2',
-          __cxy_brand_: 'creality',
-        },
-        body: JSON.stringify({ modelId: id, page: 1, pageSize: 200 }),
-      });
-      const j = await r.json();
-      if (j.code === 0 && j.result?.list?.length) allStl = j.result.list;
-    } catch {}
-
-    const stlFiles = allStl.map((f) => ({
-      name: f.fileName + (f.fileFormat || ''),
-      format: (f.fileFormat || '').replace('.', ''),
-      size: f.fileSize,
-      id: f.id,
-      kind: 'model',
-      origin: 'author',
-    }));
-
-    // 说明文件（PDF 等）单独一个接口
-    let docs = [];
-    try {
-      const r = await fetch('https://www.crealitycloud.cn/api/cxy/v3/model/fileOtherListPage', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          accept: 'application/json',
-          origin: 'https://www.crealitycloud.cn',
-          referer: canonical,
-          __cxy_app_id_: 'cxy-gen2',
-          __cxy_app_ver_: '7.3.28',
-          __cxy_platform_: '2',
-          __cxy_brand_: 'creality',
-        },
-        body: JSON.stringify({ modelId: id, page: 1, pageSize: 50 }),
-      });
-      const j = await r.json();
-      docs = (j.result?.list || []).map((d) => ({
-        name: d.fileName + (d.fileFormat || ''),
-        size: d.fileSize,
-        format: (d.fileFormat || '').replace('.', ''),
-        id: d.id,
-      }));
-    } catch {}
-
-    return {
-      platform: 'creality',
-      id,
-      sourceUrl: canonical,
-      docs,
-      title: g.groupName,
-      author: g.userInfo?.nickName || '',
-      authorAvatar: g.userInfo?.avatar || '',
-      description: sanitize(g.groupDesc),
-      images: [...new Set([...(g.pcCovers || []), ...(g.covers || [])].map((c) => c.url).filter(Boolean))],
-      stats: { downloads: g.downloadCount },
-      picked: Boolean(g.isPickModel),
-      category: g.categoryName || '',
-      tags: (g.tags || []).map((t) => t.name || t).filter(Boolean),
-      publishedAt: g.createTime,
-      print: active
-        ? {
-            profileTitle: active.name,
-            thumb: active.thumbnail || '',
-            timeText: fmtHours(active.timeSec),
-            timeSec: active.timeSec,
-            weightG: active.weightG ? Math.round(active.weightG * 10) / 10 : null,
-            plates: active.plates,
-            nozzle: active.nozzle,
-            layerHeight: active.layerHeight,
-            wallLoops: active.wallLoops,
-            infill: active.infill,
-            filaments: active.filaments,
-            plateList: [],
-            machines: active.machines.map((n) => ({ name: n })),
-            source: 'ssr',
-          }
-        : null,
-      profiles: profiles.map((p) => ({ ...p, url: `${canonical}?profileId=${p.id}` })),
-      activeProfileId: active?.id || null,
-      files: stlFiles,
-      fileIds: stlFiles.map((f) => f.id),
-      // 3mf 打印配置没有公开下载接口，界面上标出来让用户去站点下
-      siteOnlyFiles: profiles.map((p) => ({
-        name: `${p.title || '打印配置'} · ${p.name}.3mf`,
-        size: p.size,
-        kind: 'profile',
-        url: `${canonical}?profileId=${p.id}`,
-      })),
-    };
-  },
-  async fileLinks(model) {
-    if (!model.fileIds.length) return [];
-    const js = `(async () => {
-      const ck = Object.fromEntries(document.cookie.split('; ').map(s => { const i = s.indexOf('='); return [s.slice(0,i), s.slice(i+1)]; }));
-      const h = { 'content-type': 'application/json', '__cxy_app_id_': 'cxy-gen2', '__cxy_app_ver_': '7.3.28',
-        '__cxy_platform_': '2', '__cxy_brand_': 'creality', '__cxy_os_ver_': 'Linux',
-        '__cxy_os_lang_': ck['model_lang'] || '1', '__cxy_timezone_': '0',
-        '__cxy_token_': ck['model_token'] || '', '__cxy_uid_': ck['model_user_id'] || '',
-        '__cxy_duid_': ck['model_device_id'] || '', '__cxy_requestid_': crypto.randomUUID() };
-      const ids = ${JSON.stringify([...(model.fileIds || []), ...((model.docs || []).map((d) => d.id))])};
-      const r = await fetch('/api/cxy/v3/model/memberDownload', { method: 'POST', headers: h,
-        body: JSON.stringify({ modelId: ${JSON.stringify(model.id)}, fileIds: ids }) });
-      const j = await r.json();
-      return { code: j.code, msg: j.msg, urls: (j.result && j.result.downloadUrls) || [] };
-    })()`;
-    const { value: res } = await evalInPage(model.sourceUrl, js);
-    if (res.code !== 0) throw new Error(`memberDownload 拒绝（${res.code} ${res.msg}）：先在浏览器登录创想云`);
-    return res.urls.map((u) => {
-      const doc = (model.docs || []).find((d) => d.id === u.fileId);
-      if (doc) return { name: doc.name, url: u.url, size: u.size, kind: 'doc' };
-      const meta = model.files.find((f) => f.id === u.fileId);
-      return { name: `${u.fileName}.${meta?.format || 'stl'}`, url: u.url, size: u.size, kind: 'model' };
-    });
-  },
-};
+// ── 还没搬进站点包的适配器（票 03–05 搬完这张表就空了）────────────────
 
 // MakerWorld：整站对非浏览器 UA 返 403，详情和 f3mf 都得在页面里取
 const makerworld = {
@@ -567,8 +397,8 @@ const makeronline = {
   },
 };
 
-// 还没搬进站点包的三个站（票 02–05 逐个搬走，搬完这张表就空了）
-const ADAPTERS = { creality, makerworld, makeronline };
+// 还没搬进站点包的两个站（票 03–05 逐个搬走，搬完这张表就空了）
+const ADAPTERS = { makerworld, makeronline };
 
 // ── 主流程 ──────────────────────────────────────────────────────
 // 先问站点包（sites/index.mjs），包不认再退回旧适配器表

@@ -3,28 +3,11 @@
 import * as ch from './channel.mjs';
 import * as sites from './sites/index.mjs';
 
-// 每站的 token cookie 名 + 鉴权接口。改站点只改这张表。
+// 顺序就是控制台里的显示顺序；标签优先取站点包自己的
+const ORDER = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com'];
+
+// 还没搬进站点包的站：token cookie 名 + 鉴权接口。票 03–05 搬完这张表就空了。
 const PROBES = {
-  creality: {
-    label: '创想云',
-    tokenCookie: 'model_token',
-    async run(cookieMap) {
-      // 必须成对带 token + uid，只带 token 会 code:4 Invalid Token（2026-10-29 实测）
-      const r = await ch.fetchAs('creality', 'https://www.crealitycloud.cn/api/cxy/v3/user/getInfo', {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          __cxy_token_: cookieMap.model_token || '',
-          __cxy_uid_: cookieMap.model_user_id || '',
-        },
-        body: '{}',
-      });
-      if (!r) return offline();
-      const j = await r.json().catch(() => null);
-      const name = j?.result?.profileUserInfo?.base?.nickName;
-      return name ? { ok: true, name } : { ok: false, status: 'logged-out' };
-    },
-  },
   makerworld: {
     label: 'MakerWorld',
     // 登录 cookie 是 HttpOnly，且该站挡 TLS 指纹，只能走真浏览器页内 fetch
@@ -116,8 +99,6 @@ export async function state(force = false) {
   return cache;
 }
 
-// 顺序就是控制台里的显示顺序；标签优先取站点包自己的
-const ORDER = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com'];
 export const SITES = ORDER.map((site) => ({ site, label: sites.byName(site)?.label || PROBES[site]?.label || site }));
 
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'session.mjs') {

@@ -35,25 +35,6 @@ export function parseUserUrl(input) {
 // ── 归一化（纯函数） ────────────────────────────────────────────
 
 
-export function normalizeCreality(raw) {
-  const id = raw?.id == null ? '' : String(raw.id);
-  return {
-    site: 'creality',
-    id,
-    title: str(raw?.groupName) || '',
-    url: id ? `https://www.crealitycloud.cn/model-detail/${id}` : '',
-    cover: str(raw?.covers?.[0]?.url),
-    author: str(raw?.userInfo?.nickName),
-    likes: num(raw?.likeCount),
-    downloads: num(raw?.downloadCount),
-    collects: num(raw?.collectionCount),
-    comments: num(raw?.commentCount),
-    picked: Boolean(raw?.isPickModel),
-    publishedAt: iso(raw?.createTime),
-    tags: [], // 搜索结果只带 categoryName，没有标签
-  };
-}
-
 export function normalizeMakerworld(raw) {
   const id = raw?.id == null ? '' : String(raw.id);
   return {
@@ -124,17 +105,6 @@ function throttle(site) {
 
 // ── 网络层 ──────────────────────────────────────────────────────
 
-const CREALITY_HEADERS = {
-  'content-type': 'application/json',
-  __cxy_app_id_: 'cxy-gen2',
-  __cxy_app_ver_: '7.3.28',
-  __cxy_platform_: '2',
-  __cxy_brand_: 'creality',
-};
-
-// 只实测过 sortType 10 = 下载量，别的排序不猜
-const crealitySort = (sort) => (sort === 'downloads' ? 10 : 10);
-
 const MAKERWORLD_ORDER = {
   downloads: 'downloadCount',
   likes: 'likeCount',
@@ -142,29 +112,6 @@ const MAKERWORLD_ORDER = {
   hot: 'hotScore',
   score: 'score',
 };
-
-async function fetchCreality(keyword, page, pageSize, sort) {
-  const r = await fetch('https://www.crealitycloud.cn/api/cxy/smart_search/v1/model', {
-    method: 'POST',
-    headers: CREALITY_HEADERS,
-    body: JSON.stringify({
-      page,
-      pageSize,
-      keyword,
-      sortType: crealitySort(sort),
-      printers: [],
-      promoType: 0,
-      isVip: 0,
-      trendType: 1,
-      multiMark: 0,
-    }),
-  });
-  if (!r.ok) throw new Error(`创想云 HTTP ${r.status}`);
-  const j = await r.json();
-  const list = j?.result?.list;
-  if (!Array.isArray(list)) throw new Error('创想云返回里没有 result.list');
-  return { total: num(j.result.count), items: list.map(normalizeCreality) };
-}
 
 async function fetchMakerworld(keyword, page, pageSize, sort) {
   const orderBy = MAKERWORLD_ORDER[sort] || 'score';
@@ -200,29 +147,14 @@ async function fetchMakeronline(keyword, page, pageSize, sort) {
   return { total: num(j.data.page?.total), items: list.map(normalizeMakeronline) };
 }
 
-// 还没搬进站点包的三个站（票 02–05 逐个搬走）
+// 还没搬进站点包的两个站（票 03–05 逐个搬走）
 const FETCHERS = {
-  creality: fetchCreality,
   makerworld: fetchMakerworld,
   makeronline: fetchMakeronline,
 };
 
 // ── 用户主页：订阅某个作者发过的全部模型 ────────────────────────
 // 四站的主页列表都能匿名取；MakerWorld 照旧只能走真浏览器。
-
-async function fetchCrealityUser(uid, page, pageSize) {
-  if (!/^\d+$/.test(uid)) throw new Error('创想云用户 id 必须是数字');
-  const r = await fetch('https://www.crealitycloud.cn/api/cxy/v3/model/listSharePage', {
-    method: 'POST',
-    headers: CREALITY_HEADERS,
-    body: JSON.stringify({ userId: Number(uid), page, pageSize }),
-  });
-  if (!r.ok) throw new Error(`创想云 HTTP ${r.status}`);
-  const j = await r.json();
-  const list = j?.result?.list;
-  if (!Array.isArray(list)) throw new Error('创想云用户页返回里没有 result.list');
-  return { total: num(j.result.count), items: list.map(normalizeCreality) };
-}
 
 async function fetchMakeronlineUser(uid, page, pageSize) {
   const q = new URLSearchParams({ page: String(page), page_size: String(pageSize), user_id: uid });
@@ -263,7 +195,6 @@ async function fetchMakerworldUser(handle, page) {
 }
 
 const USER_FETCHERS = {
-  creality: fetchCrealityUser,
   makerworld: fetchMakerworldUser,
   makeronline: fetchMakeronlineUser,
 };
@@ -305,24 +236,6 @@ export async function search(site, keyword, { page = 1, sort = 'downloads', page
 // ── 自检：纯函数，不联网、不起浏览器 ────────────────────────────
 
 function demo() {
-  const c = normalizeCreality({
-    id: 'abc',
-    groupName: '小船',
-    createTime: 1_700_000_000,
-    covers: [{ url: 'https://x/c.webp' }],
-    userInfo: { nickName: '作者' },
-    likeCount: 3,
-    downloadCount: 4,
-    collectionCount: 5,
-    commentCount: 6,
-    isPickModel: true,
-  });
-  console.assert(c.site === 'creality', '创想云站点名');
-  console.assert(c.url === 'https://www.crealitycloud.cn/model-detail/abc', '创想云详情页 URL');
-  console.assert(c.publishedAt === '2023-11-14T22:13:20.000Z', '创想云秒级时间戳');
-  console.assert(c.likes === 3 && c.downloads === 4 && c.collects === 5 && c.comments === 6, '创想云计数');
-  console.assert(c.picked === true && c.author === '作者', '创想云作者/精选');
-
   const m = normalizeMakerworld({ id: 7, title: 'T', tags: ['benchy', 1], designCreator: { name: 'B' }, createTime: '2024-05-23T09:28:27Z' });
   console.assert(m.url === 'https://makerworld.com.cn/zh/models/7', 'MakerWorld 详情页 URL');
   console.assert(m.publishedAt === '2024-05-23T09:28:27.000Z' && m.tags.length === 1, 'MakerWorld 时间/标签');

@@ -1,8 +1,9 @@
 // 站点包登记表。加一个站点 = 新增一个包文件 + 在这里登记一行（docs/spec.md §2）。
 // 公共层不许出现 `if (site === ...)`，站点之间的差异都在各自的包里。
 import snapmaker from './snapmaker.mjs';
+import creality from './creality.mjs';
 
-const PACKS = [snapmaker];
+const PACKS = [snapmaker, creality];
 const BY_NAME = new Map(PACKS.map((p) => [p.site, p]));
 
 export const all = () => PACKS;
