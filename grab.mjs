@@ -12,10 +12,11 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ROOT, sanitize, slugify, autoTags, writeJson, noFilesKind } from './lib.mjs';
-import { connectionState, fetchAs, closePages } from './channel.mjs';
+import { connectionState, fetchAs, closePages, forget } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
+import * as authneed from './authneed.mjs';
 
 // 没下到文件时给控制台看的原因
 const NO_FILES_TEXT = {
@@ -103,27 +104,25 @@ if (!url) {
 
 // ── 通用工具 ────────────────────────────────────────────────────
 
-// 图片/缩略图走公开 CDN，匿名就够；模型文件要登录态（ADR-0003），所以多一个 site 参数。
-// 失败最多试 3 次（本任务内 attempts 上限），第 2 次起强制重取登录态——大概率是登录态过期。
+// 图片/缩略图走公开 CDN，匿名就够；模型文件可能要登录态，所以多一个 site 参数。
+// 走 ADR-0003 的升级链（authneed.mjs）：先匿名，不行再带登录，还不行刷新登录再来一次。
 async function download(target, dest, site) {
-  let lastErr;
-  for (let attempt = 0; attempt < 3; attempt++) {
-    try {
-      const r = site
-        ? await fetchAs(site, target, { headers: { 'user-agent': UA } }, attempt > 0)
-        : await fetch(target, { headers: { 'user-agent': UA } });
-      if (!r) throw new Error('浏览器没连上，拿不到登录态');
-      if (!r.ok) throw new Error(`下载失败 ${r.status} ${target.slice(0, 80)}`);
-      const buf = Buffer.from(await r.arrayBuffer());
-      await writeJson(dest, buf);
-      // 边写边算：文件级去重要 hash，反正 buf 已经在内存里，多这一步是零额外 I/O
-      return { bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') };
-    } catch (e) {
-      lastErr = e;
-      if (attempt < 2) await new Promise((r) => setTimeout(r, 2000));
-    }
-  }
-  throw lastErr;
+  const headers = { 'user-agent': UA };
+  const key = site ? authneed.epKey(site, target) : 'anon|' + target.slice(0, 60);
+  const table = await authneed.load();
+  const { res } = site
+    ? await authneed.fetchWithLadder({
+        key,
+        table,
+        anon: () => fetchAs(site, target, { headers, anonymous: true }),
+        login: () => fetchAs(site, target, { headers }),
+        refreshLogin: () => forget(), // 强制下一次重取 cookie（登录态可能刚过期）
+      })
+    : { res: await fetch(target, { headers }) };
+  if (!res || !res.ok) throw new Error(`下载失败 ${res?.status ?? '?'} ${target.slice(0, 80)}`);
+  const buf = Buffer.from(await res.arrayBuffer());
+  await writeJson(dest, buf);
+  return { bytes: buf.length, sha256: createHash('sha256').update(buf).digest('hex') };
 }
 
 // ── 主流程 ──────────────────────────────────────────────────────
@@ -148,6 +147,20 @@ if (!pack) {
 const platform = pack.platform || site;
 progress({ phase: 'fetching', site, id });
 const model = await pack.meta(hit.url);
+// 站点包声明的「按设计就要登录」的接口：直接记进 auth-needs，别每次白试匿名
+if (pack.loginOnly?.length) {
+  const table = await authneed.load();
+  let touched = false;
+  for (const p of pack.loginOnly) {
+    const key = `${site}|${p}`;
+    const e = table[key];
+    if (!e?.needsLogin) {
+      table[key] = { ...(e || {}), needsLogin: true, attempts: e?.attempts || 0, rounds: 0, lastAt: new Date().toISOString() };
+      touched = true;
+    }
+  }
+  if (touched) await authneed.save(table);
+}
 model.fetchedAt = new Date().toISOString();
 progress({ phase: 'parsing', title: model.title });
 

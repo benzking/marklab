@@ -299,6 +299,8 @@ export async function categories() {
 
 export default {
   site: 'creality',
+  // 这个接口按设计就要登录（签名链接靠登录态算），匿名优先在它身上没意义
+  loginOnly: ['/api/cxy/v3/model/memberDownload'],
   platform: 'creality',
   label: '创想云',
   hosts: HOSTS,

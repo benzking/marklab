@@ -219,6 +219,11 @@ export async function evalInPage(url, expr, { wait = 0 } = {}) {
 
 /** 带登录态的 node fetch：三站走这条，比开浏览器快且不占屏幕。force=true 重取登录态（401 后重试用）。 */
 export async function fetchAs(site, url, opts = {}, force = false) {
+  // 匿名请求不碰浏览器、不带 cookie：公开 CDN 的文件靠这条活着（Chromium 没开也能下）
+  if (opts.anonymous) {
+    const { anonymous, ...rest } = opts;
+    return fetch(url, rest);
+  }
   return withBrowser(site, async () => {
     const cookie = await rawCookieHeader(site, force);
     if (cookie == null) return null; // 浏览器没连上
