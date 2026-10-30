@@ -669,3 +669,23 @@ process.exit(1);
   assert.match(j.detail, /memberDownload/, '原文要留着给人看');
   await rm(base, { recursive: true, force: true });
 });
+
+test('判重索引每轮重建：别的进程新写的模型，下一轮订阅能看见', async () => {
+  const { index } = await import('./dup.mjs');
+  const lib = await mkdtemp(path.join(os.tmpdir(), 'ml-idx-'));
+  await mkdir(path.join(lib, 'creality-aaa'), { recursive: true });
+  await writeFile(
+    path.join(lib, 'creality-aaa', 'model.json'),
+    JSON.stringify({ platform: 'creality', id: 'aaa', title: '甲', author: '乙', fetchedAt: new Date().toISOString() }),
+  );
+  const first = await index(true, lib);
+  assert.equal(first.keys.has('creality:aaa'), true, '第一次建索引能看到已有模型');
+  // 模拟别的进程刚入库
+  await mkdir(path.join(lib, 'creality-bbb'), { recursive: true });
+  await writeFile(
+    path.join(lib, 'creality-bbb', 'model.json'),
+    JSON.stringify({ platform: 'creality', id: 'bbb', title: '丙', author: '丁', fetchedAt: new Date().toISOString() }),
+  );
+  assert.equal((await index(true, lib)).keys.has('creality:bbb'), true, 'force 重建要看到新模型');
+  await rm(lib, { recursive: true, force: true });
+});

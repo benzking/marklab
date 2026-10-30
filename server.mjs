@@ -25,9 +25,17 @@ const LIB = path.join(ROOT, 'library');
 const MIN_FREE_BYTES = 5 * 1024 ** 3;
 const PORT = Number(process.env.PORT || 8851);
 
-// 分类对照（docs/categories/）：模型按原站分类名映射到统一分类，启动时读一次
-const CATS = JSON.parse(await readFile(path.join(ROOT, 'docs/categories/merge.json'), 'utf8'));
-const CAT_MAP = catIndex(JSON.parse(await readFile(path.join(ROOT, 'docs/categories/sites.json'), 'utf8')).sites, CATS);
+// 分类对照（docs/categories/）：模型按原站分类名映射到统一分类，启动时读一次。
+// 读不到就当没有分类——临时根（MARKLAB_ROOT）里没拷 docs/ 也要能起服务。
+const readJsonOr = async (file, fallback) => {
+  try {
+    return JSON.parse(await readFile(file, 'utf8'));
+  } catch {
+    return fallback;
+  }
+};
+const CATS = await readJsonOr(path.join(ROOT, 'docs/categories/merge.json'), { level1: [] });
+const CAT_MAP = catIndex((await readJsonOr(path.join(ROOT, 'docs/categories/sites.json'), { sites: {} })).sites, CATS);
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -126,7 +134,25 @@ function slim(m) {
   return out;
 }
 
+// /api/models 的结果缓存：600+ 模型每次全量重算要 0.5–0.9 秒、500 KB。
+// 失效靠两条：库目录 mtime 变了（增删模型），或写操作显式调 invalidateModels()（改 model.json）。
+let modelsCache = null;
+let modelsCacheAt = 0;
+let modelsCacheSig = '';
+export function invalidateModels() {
+  modelsCache = null;
+}
+// 抓取子进程写完 model.json 时 library/ 的 mtime 不一定变（覆盖已有目录），
+// 所以让任务收尾直接踢一脚缓存
+tasks.onFinish(() => invalidateModels());
+
 async function listModels() {
+  let sig = '';
+  try {
+    const st = await stat(LIB);
+    sig = `${st.mtimeMs}:${st.ino}`;
+  } catch {}
+  if (modelsCache && Date.now() - modelsCacheAt < 60_000 && sig === modelsCacheSig) return modelsCache;
   const out = [];
   for (const entry of await readdir(LIB, { withFileTypes: true })) {
     if (!entry.isDirectory()) continue;
@@ -137,7 +163,11 @@ async function listModels() {
   const dups = await dup.marks();
   const byKey = new Map(out.map((m) => [`${m.platform}:${m.id}`, m]));
   for (const m of out) linkDups(m, dups, byKey);
-  return out.sort((a, b) => String(b.fetchedAt).localeCompare(String(a.fetchedAt)));
+  out.sort((a, b) => String(b.fetchedAt).localeCompare(String(a.fetchedAt)));
+  modelsCache = out;
+  modelsCacheAt = Date.now();
+  modelsCacheSig = sig;
+  return out;
 }
 
 
@@ -276,6 +306,7 @@ const server = http.createServer(async (req, res) => {
       if (!found) return json(res, 404, { error: '没有这个模型' });
       await rm(found.dir, { recursive: true, force: true });
       await rm(path.join(PREVIEW_ROOT, path.basename(found.dir)), { recursive: true, force: true });
+      invalidateModels();
       // 标记跟着模型走：删了模型还留着指向它的标记，页面会链到一个不存在的目录
       await dup.forget(`${found.model.platform}:${found.model.id}`);
       return json(res, 200, { ok: true });

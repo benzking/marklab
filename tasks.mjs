@@ -272,6 +272,12 @@ export function enqueue({ url, source = 'manual', dir = null, subId = null }) {
   return { task: { ...task }, done };
 }
 
+// 任务收尾的旁听者（server 用它让 /api/models 缓存失效，页面立刻能看见新模型）
+const finishHooks = [];
+export function onFinish(fn) {
+  finishHooks.push(fn);
+}
+
 function finish(task, ok, error, phase) {
   task.ok = ok;
   task.phase = phase || (!ok ? (task.rounds >= MAX_ROUNDS ? 'failed' : 'interrupted') : task.phase === 'duplicate' ? 'duplicate' : 'done');
@@ -289,6 +295,11 @@ function finish(task, ok, error, phase) {
   }
   saveState().catch(() => {}); // 闸门持久化：重启后别立刻放行
   persist(task).catch(() => {});
+  for (const fn of finishHooks) {
+    try {
+      fn(task);
+    } catch {}
+  }
   const resolve = resolvers.get(task.id);
   resolvers.delete(task.id);
   if (resolve) resolve({ ok, code: ok ? 0 : 1, log: task.log, task: { ...task } });

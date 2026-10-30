@@ -194,7 +194,8 @@ export async function run(id) {
   const sub = await get(id);
   if (!sub) throw new Error('没有这个订阅');
   const startedAt = new Date().toISOString();
-  const libKeys = sub.excludeInLibrary ? (await dup.index()).keys : new Set();
+  // 库随时在变（别的进程也在抓）：每轮重建索引，否则 excludeInLibrary 永远看到旧库
+  const libKeys = sub.excludeInLibrary ? (await dup.index(true)).keys : new Set();
   // 已在排队/在跑的别再排一遍：一轮跑完前它是「已命中」状态
   const busy = new Set(
     tasks
@@ -289,6 +290,8 @@ export async function tick(now = Date.now()) {
   ticking = true;
   const ran = [];
   try {
+    // 别的进程（ipwatch / 手工改文件）可能刚写过 subs.json：每轮重读一次
+    await load(true);
     for (const sub of await list()) {
       if (!isDue(sub, now)) continue;
       try {
