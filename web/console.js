@@ -186,6 +186,7 @@ function renderWorkbench(w) {
       <div class="kv"><em>图片</em><b>${fmtBytes(disk.img)}</b></div>
       <div class="kv"><em>其它</em><b>${fmtBytes(disk.other)}</b></div>
       <div class="kv"><em>文件数</em><b>${fmtNum(disk.fileCount)}</b></div>
+      ${disk.free != null ? `<div class="kv${disk.free < 10 * 1024 ** 3 ? ' warn' : ''}"><em>剩余空间</em><b>${fmtBytes(disk.free)}</b></div>` : ''}
     </div>
     <div class="stat">
       <h3>待补抓</h3>

@@ -7,7 +7,7 @@ node server.mjs                      # 起模型库（:8851；PORT=8890 换端�
 node grab.mjs <网址>                  # 命令行抓，不给网页也行
 node bulk.mjs --limit 10             # 按榜单批量抓（详见「批量抓」）
 node --test test.mjs                 # 自检（纯函数，不联网）
-node fix.mjs [--dry]                 # 一次性维护：按当前白名单重洗库里所有描述
+node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前白名单重洗库里所有描述
 ```
 
 ## 用起来是什么样

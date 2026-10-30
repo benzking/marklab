@@ -642,7 +642,8 @@ async function showPreview(m, fileName) {
 }
 
 function renderPreview(m, fileName, info) {
-  const base = `/library/${m.dir}/files/`;
+  // 3mf 盘图是派生数据，在 /preview/ 下；不是派生数据才回落到库目录
+  const thumbUrl = (t) => (String(t).startsWith('/') ? esc(t) : `/library/${m.dir}/files/${esc(t)}`);
   if (info.kind === '3mf') {
     const plates = info.plates || [];
     return `<div class="pstats">
@@ -654,7 +655,7 @@ function renderPreview(m, fileName, info) {
         ? `<div class="pgrid">${plates
             .map(
               (pl) => `<figure class="pitem">
-                ${pl.thumb ? `<img src="${base}${esc(pl.thumb)}" alt="" loading="lazy">` : '<div class="ph"></div>'}
+                ${pl.thumb ? `<img src="${thumbUrl(pl.thumb)}" alt="" loading="lazy">` : '<div class="ph"></div>'}
                 <figcaption><b>${esc(pl.name || '打印盘 ' + pl.index)}</b>
                 <span>${[fmtH(pl.timeSec), fmtG(pl.weightG)].filter(Boolean).map(esc).join(' · ') || `第 ${pl.index} 盘`}</span>
                 ${pl.filaments?.length ? `<div class="fchips small">${filaments(pl.filaments)}</div>` : ''}

@@ -1,6 +1,6 @@
 // 工作台数据：控制台首页要的那几个数（ADR-0005 第 1、2 节定了口径）。
 // 时间一律按**北京时间自然日**，不用 UTC、不用 24 小时滑窗——同一批数据换个口径能差 5 倍。
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { readdir, readFile, stat, statfs } from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT } from './lib.mjs';
 import * as tasks from './tasks.mjs';
@@ -46,41 +46,69 @@ export function sumDisk(entries) {
   return out;
 }
 
-async function walkDisk(root, rel = '') {
-  const out = [];
-  let items;
-  try {
-    items = await readdir(path.join(root, rel), { withFileTypes: true });
-  } catch {
-    return out;
-  }
-  for (const e of items) {
-    const r = rel ? path.join(rel, e.name) : e.name;
-    if (e.isDirectory()) {
-      out.push(...(await walkDisk(root, r)));
-      continue;
+/** 纯函数：按 model.json 里记的字节数汇总磁盘占用（不再递归 stat 上万个小文件）。 */
+export function diskFromModels(models) {
+  const out = { total: 0, files: 0, img: 0, other: 0, fileCount: 0 };
+  for (const m of models) {
+    for (const f of m.savedFiles || []) {
+      const b = Number(f.bytes) || 0;
+      out.files += b;
+      out.fileCount++;
     }
-    try {
-      const st = await stat(path.join(root, r));
-      const top = r.split(path.sep)[1] || '';
-      const kind = top === 'files' ? 'files' : top === 'img' ? 'img' : 'other';
-      out.push({ kind, bytes: st.size });
-    } catch {}
+    out.img += Number(m.imgBytes) || 0;
+    out.other += Number(m.jsonBytes) || 0;
   }
+  out.total = out.files + out.img + out.other;
   return out;
 }
 
-async function readModels() {
-  const models = [];
-  for (const entry of await readdir(LIB, { withFileTypes: true })) {
-    if (!entry.isDirectory()) continue;
-    try {
-      const m = JSON.parse(await readFile(path.join(LIB, entry.name, 'model.json'), 'utf8'));
-      m.dir = entry.name;
-      models.push(m);
-    } catch {}
+/** 剩余空间（字节）。查不到返回 null——不能因为查不到就拒绝入队。 */
+export async function freeSpace() {
+  try {
+    const s = await statfs(ROOT);
+    return s.bavail * s.bsize;
+  } catch {
+    return null;
   }
-  return models;
+}
+
+// 解析结果按 mtime+size 缓存：库里 700 多个 model.json 一共 9 MB，每次全解要 300ms 以上，
+// 但一分钟内几乎不会变——只重解变过的那个文件。
+const modelCache = new Map();
+
+async function readModels() {
+  const dirs = [];
+  for (const entry of await readdir(LIB, { withFileTypes: true })) {
+    if (entry.isDirectory()) dirs.push(entry.name);
+  }
+  // 并发读：串行读 739 个文件要 500ms，并发读压到 150ms 上下
+  const models = await Promise.all(
+    dirs.map(async (dir) => {
+      const file = path.join(LIB, dir, 'model.json');
+      let st;
+      try {
+        st = await stat(file);
+      } catch {
+        return null;
+      }
+      const hit = modelCache.get(dir);
+      if (hit && hit.mtimeMs === st.mtimeMs && hit.size === st.size) return hit.m;
+      try {
+        const text = await readFile(file, 'utf8');
+        const m = JSON.parse(text);
+        m.dir = dir;
+        m.jsonBytes = Buffer.byteLength(text);
+        modelCache.set(dir, { mtimeMs: st.mtimeMs, size: st.size, m });
+        return m;
+      } catch {
+        return null;
+      }
+    }),
+  );
+  // 删掉的模型别在缓存里留尸
+  const alive = new Set(dirs);
+  for (const k of modelCache.keys()) if (!alive.has(k)) modelCache.delete(k);
+  return models.filter(Boolean);
 }
 
 let cache = null;
@@ -91,12 +119,13 @@ let cacheAt = 0;
 export async function workbench(force = false) {
   if (!force && cache && Date.now() - cacheAt < TTL) return cache;
 
-  const [models, diskEntries] = await Promise.all([readModels(), walkDisk(LIB)]);
+  const models = await readModels();
 
   const bySite = {};
   for (const m of models) bySite[m.platform] = (bySite[m.platform] || 0) + 1;
 
-  const disk = sumDisk(diskEntries);
+  const disk = diskFromModels(models);
+  disk.free = await freeSpace();
 
   // 数据健康：只数真缺的，不编指标
   const health = {

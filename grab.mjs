@@ -170,17 +170,20 @@ await mkdir(imgDir, { recursive: true });
 
 // 图片落地，页面才能离线看
 const localImages = [];
+let imgBytes = 0; // 磁盘用量按记录累加，不再每次去 stat 上万个小文件
 for (const [i, src] of model.images.slice(0, 12).entries()) {
   const ext = (src.match(/\.(png|jpe?g|webp)/i) || [, 'png'])[1].toLowerCase();
   const name = `${String(i + 1).padStart(2, '0')}.${ext}`;
   try {
-    await download(src, path.join(imgDir, name));
+    const got = await download(src, path.join(imgDir, name));
+    imgBytes += got.bytes;
     localImages.push(`img/${name}`);
   } catch (e) {
     console.warn(`  图片跳过 ${src.slice(0, 60)}：${e.message}`);
   }
 }
 model.localImages = localImages;
+model.imgBytes = imgBytes;
 
 // 打印盘缩略图也落地，否则离线看是空框
 if (model.print?.plateList?.length) {
@@ -191,7 +194,8 @@ if (model.print?.plateList?.length) {
     const ext = (pl.thumb.match(/\.(png|jpe?g|webp)/i) || [, 'png'])[1].toLowerCase();
     const name = `${String(i + 1).padStart(2, '0')}.${ext}`;
     try {
-      await download(pl.thumb, path.join(platesDir, name));
+      const got = await download(pl.thumb, path.join(platesDir, name));
+      imgBytes += got.bytes;
       pl.thumb = `img/plates/${name}`;
     } catch {}
   }

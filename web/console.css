@@ -275,3 +275,8 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
   .log-row { grid-template-columns: 1fr; gap: 2px; }
   .log-site, .log-time { display: inline; }
 }
+
+/* 剩余空间低于 10 GB 标黄：磁盘满了会写到一半失败 */
+.kv.warn b {
+  color: var(--warn, #d9a441);
+}

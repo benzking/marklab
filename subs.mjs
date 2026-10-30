@@ -7,6 +7,7 @@ import { writeJson, ROOT } from './lib.mjs';
 import * as search from './search.mjs';
 import * as tasks from './tasks.mjs';
 import * as dup from './dup.mjs';
+import * as stats from './stats.mjs';
 
 const DATA = path.join(ROOT, 'data');
 const FILE = path.join(DATA, 'subs.json');
@@ -251,16 +252,23 @@ export async function run(id) {
     }
   }
 
+  let lastError = null;
   const stopped = !sub.enabled; // 跑到一半被点「停止」：已搜到的照记历史，但不再往库里塞
   const ordered = sortItems(matched, sub.sort);
   const limit = Math.max(1, Number(sub.roundLimit) || 50);
   const truncated = Math.max(0, ordered.length - limit);
   const take = ordered.slice(0, limit);
 
-  if (!stopped) {
-    for (const hit of take) {
-      const { task } = await tasks.enqueue({ url: hit.url, source: 'subscribe', subId: sub.id });
-      hit.taskId = task.id;
+  if (!stopped && take.length) {
+    // 磁盘不够就别排了：写一半失败比没排更糟（同一道闸门，手动入队也走它）
+    const free = await stats.freeSpace();
+    if (free != null && free < 5 * 1024 ** 3) {
+      lastError = `磁盘不足：只剩 ${(free / 1024 ** 3).toFixed(1)} GB，本轮不排队`;
+    } else {
+      for (const hit of take) {
+        const { task } = await tasks.enqueue({ url: hit.url, source: 'subscribe', subId: sub.id });
+        hit.taskId = task.id;
+      }
     }
   }
   if (take.length) await appendHits(sub.id, take);
@@ -268,6 +276,7 @@ export async function run(id) {
   delete sub.progress;
   sub.lastRunAt = new Date().toISOString();
   sub.lastResult = { at: sub.lastRunAt, startedAt, searched, matched: take.length, truncated, stopped };
+  if (lastError) sub.lastResult.error = lastError;
   await persist();
 
   return { sub, hits: take, truncated, searched };

@@ -8,7 +8,7 @@
 
 import http from 'node:http';
 import { readFile, readdir, rm, stat, mkdir } from 'node:fs/promises';
-import { inspectFile } from './inspect.mjs';
+import { inspectFile, PREVIEW_ROOT } from './inspect.mjs';
 import { catIndex, catOf, inside, writeJson, ROOT } from './lib.mjs';
 import { match as matchSite } from './sites/index.mjs';
 import * as tasks from './tasks.mjs';
@@ -21,6 +21,8 @@ import path from 'node:path';
 
 const WEB = path.join(ROOT, 'web');
 const LIB = path.join(ROOT, 'library');
+// 磁盘低于这个数就不让入队：写一半失败比排队更糟
+const MIN_FREE_BYTES = 5 * 1024 ** 3;
 const PORT = Number(process.env.PORT || 8851);
 
 // 分类对照（docs/categories/）：模型按原站分类名映射到统一分类，启动时读一次
@@ -173,6 +175,13 @@ const readBody = (req) =>
   });
 
 // 目录名只允许 library 下真实存在的模型目录，挡掉路径穿越
+/** 磁盘不够就返回一句人话（null = 可以入队）。查不到剩余空间时不拦，别因噎废食。 */
+async function diskTooLow() {
+  const free = await stats.freeSpace();
+  if (free == null || free >= MIN_FREE_BYTES) return null;
+  return { error: `磁盘不足：只剩 ${(free / 1024 ** 3).toFixed(1)} GB，至少要留 5 GB 再抓` };
+}
+
 async function safeModelDir(name) {
   if (!/^[a-z0-9][a-z0-9._-]*$/i.test(name || '')) return null;
   const dir = path.join(LIB, name);
@@ -219,6 +228,8 @@ const server = http.createServer(async (req, res) => {
       const { url: target } = await readBody(req);
       if (!/^https?:/i.test(target || '')) return json(res, 400, { error: '需要 http(s) 网址' });
       if (!matchSite(target)) return json(res, 400, { error: '不认识的站点网址' });
+      const low = await diskTooLow();
+      if (low) return json(res, 400, low);
       const { task } = tasks.enqueue({ url: target, source: 'manual' });
       // 202：不阻塞请求，入库要排限速闸门（可能几分钟）；进度看 /api/console/tasks
       return json(res, 202, { accepted: true, taskId: task.id });
@@ -229,6 +240,8 @@ const server = http.createServer(async (req, res) => {
       const found = await safeModelDir(dir);
       if (!found) return json(res, 404, { error: '没有这个模型' });
       if (!matchSite(found.model.sourceUrl)) return json(res, 400, { error: '这个模型没有可识别的来源网址' });
+      const low = await diskTooLow();
+      if (low) return json(res, 400, low);
       const { task } = tasks.enqueue({ url: found.model.sourceUrl, source: 'refetch' });
       return json(res, 202, { accepted: true, taskId: task.id });
     }
@@ -243,7 +256,7 @@ const server = http.createServer(async (req, res) => {
       if (path.basename(file) !== file || !/\.(3mf|stl)$/i.test(file)) return json(res, 400, { error: '文件名不合法' });
       const abs = path.join(found.dir, 'files', file);
       if (!(await inside(found.dir, abs))) return json(res, 403, { error: 'forbidden' });
-      const cacheFile = path.join(found.dir, '.inspect', `${file}.json`);
+      const cacheFile = path.join(PREVIEW_ROOT, path.basename(found.dir), `${file}.json`);
       try {
         return json(res, 200, JSON.parse(await readFile(cacheFile, 'utf8')));
       } catch {}
@@ -262,6 +275,7 @@ const server = http.createServer(async (req, res) => {
       const found = await safeModelDir(dir);
       if (!found) return json(res, 404, { error: '没有这个模型' });
       await rm(found.dir, { recursive: true, force: true });
+      await rm(path.join(PREVIEW_ROOT, path.basename(found.dir)), { recursive: true, force: true });
       // 标记跟着模型走：删了模型还留着指向它的标记，页面会链到一个不存在的目录
       await dup.forget(`${found.model.platform}:${found.model.id}`);
       return json(res, 200, { ok: true });
@@ -458,6 +472,13 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/' || p === '/index.html') return serveFile(res, path.join(WEB, 'index.html'));
     if (p === '/app.js' || p === '/style.css') return serveFile(res, path.join(WEB, p.slice(1)));
+
+    // 派生数据（3mf 盘图）：库目录里不再放，改从这里出
+    if (p.startsWith('/preview/')) {
+      const file = path.join(PREVIEW_ROOT, p.slice('/preview/'.length));
+      if (!(await inside(PREVIEW_ROOT, file))) return json(res, 403, { error: 'forbidden' });
+      return serveFile(res, file);
+    }
 
     if (p.startsWith('/library/')) {
       const rel = p.slice('/library/'.length);

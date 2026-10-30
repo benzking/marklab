@@ -3,11 +3,15 @@
 //
 //   node inspect.mjs library/xxx/files/01-a.3mf
 //
-// 3mf 的盘图会写到同目录的 preview/ 下，返回里给相对路径。
+// 3mf 的盘图写到 data/preview/<模型目录>/<文件名>/ 下（派生数据不进库），返回里给 /preview/ 网址。
 
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { inflateRawSync } from 'node:zlib';
 import path from 'node:path';
+import { ROOT } from './lib.mjs';
+
+// 派生数据统一放这里：library/ 只留 model.json / files / img
+export const PREVIEW_ROOT = path.join(ROOT, 'data', 'preview');
 
 // 极简 zip 读取：只认 store/deflate，够读 3mf
 export function readZip(buf) {
@@ -68,8 +72,9 @@ function platesFromXml(xml) {
 export async function inspectFile(file) {
   const buf = await readFile(file);
   const ext = path.extname(file).toLowerCase();
-  const dir = path.dirname(file);
-  const previewDir = path.join(dir, 'preview', path.basename(file, ext));
+  const dir = path.dirname(file); // …/library/<模型目录>/files
+  const modelDir = path.basename(path.dirname(dir));
+  const previewDir = path.join(PREVIEW_ROOT, modelDir, path.basename(file, ext));
 
   if (ext === '.3mf' || (buf[0] === 0x50 && buf[1] === 0x4b)) {
     const zip = readZip(buf);
@@ -88,7 +93,7 @@ export async function inspectFile(file) {
       const idx = Number(name.match(/(\d+)/)[1]);
       const out = path.join(previewDir, `plate-${idx}.png`);
       await writeFile(out, zip.read(name));
-      thumbs.push({ index: idx, file: path.relative(dir, out).split(path.sep).join('/') });
+      thumbs.push({ index: idx, file: `/preview/${modelDir}/${path.basename(file, ext)}/plate-${idx}.png` });
     }
 
     const count = Math.max(thumbs.length, slicePlates.length, settingPlates.length);
