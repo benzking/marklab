@@ -11,7 +11,7 @@ import { mkdir, readFile, rm } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
-import { ROOT, sanitize, slugify, autoTags, writeJson } from './lib.mjs';
+import { ROOT, sanitize, slugify, autoTags, writeJson, noFilesKind } from './lib.mjs';
 import { connectionState, fetchAs, closePages } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
@@ -23,6 +23,7 @@ const NO_FILES_TEXT = {
   captcha: '文件一个都没下到：站点要过人机验证（在浏览器里打开该模型页过一次，再补抓）',
   parse: '文件一个都没下到：站点给了文件列表但没拿到直链（可能改版了）',
   none: '站点没给文件直链（这类模型只能在站点里下）',
+  skipped: '这次没下文件（--no-files），不算失败',
 };
 
 const args = process.argv.slice(2);
@@ -43,10 +44,46 @@ const exit = (code = 0) =>
     .catch(() => {}) // 关标签页失败也照退，不然会在这里打转
     .then(() => new Promise(() => process.stdout.write('', () => process.exit(code))));
 
+// 错误分类：控制台要显示「下一步该干什么」，不是一坨堆栈（spec §10.1）
+const ERR_TEXT = {
+  login: '要登录才有文件：先在浏览器登录该站，再补抓',
+  captcha: '要过人机验证：在浏览器里打开该模型页过一次，再补抓',
+  browser: '浏览器没连上：先把本机 Chromium（9223）起起来',
+  timeout: '请求超时：站点慢或网络不通，稍后重试',
+  network: '网络错误：连不上站点，检查网络后重试',
+  disk: '磁盘写不进去：清点空间再重试',
+  parse: '解析失败：站点结构可能变了，需要改解析口',
+  'unknown-site': '不认识的站点：只支持已登记的站点包',
+  unknown: '抓取失败：看下面的原文',
+};
+
+function classify(e) {
+  const msg = String(e?.message || e || '');
+  const code = /机器人|captcha|人机验证/i.test(msg)
+    ? 'captcha'
+    : /登录|403|unauthor|forbidden/i.test(msg)
+      ? 'login'
+      : /浏览器|9223|CDP|没连上/i.test(msg)
+        ? 'browser'
+        : /超时|timeout|ETIMEDOUT|aborted/i.test(msg)
+          ? 'timeout'
+          : /ENOSPC|磁盘|空间不足/i.test(msg)
+            ? 'disk'
+            : /ENOTFOUND|ECONN|EAI_AGAIN|fetch failed|网络/i.test(msg)
+              ? 'network'
+              : /解析|没拿到|结构|不认识的站点/i.test(msg)
+                ? 'parse'
+                : 'unknown';
+  return { code, text: ERR_TEXT[code], detail: msg.slice(0, 300) };
+}
+
 // 没接住的错误 / 被停止也要先关标签页再退（ADR-0005 补记 11）
 const fatal = (e) => {
-  console.error(`\n抓取失败：${e?.message || e}`);
-  exit(1);
+  const c = e?.code && ERR_TEXT[e.code] ? { code: e.code, text: ERR_TEXT[e.code], detail: String(e.message) } : classify(e);
+  console.error(`\n抓取失败（${c.code}）：${c.detail}`);
+  // 结构化事件让 tasks 直接拿到人话分类，不用去 stderr 里猜（以前猜出 Node.js v20.19.2）
+  progress({ phase: 'failed', code: c.code, text: c.text, detail: c.detail });
+  return exit(1); // 永不 resolve：调用方 await 它，就不会继续往下跑
 };
 process.on('unhandledRejection', fatal);
 process.on('uncaughtException', fatal);
@@ -93,8 +130,12 @@ async function download(target, dest, site) {
 // 认网址只问站点包（sites/index.mjs）；认不出就拒，不再猜
 const hit = sites.match(url);
 if (!hit) {
-  console.error(`暂不支持的站点。目前支持：\n  ${sites.all().flatMap((p) => p.hosts).join(' / ')}`);
-  process.exit(2);
+  // await：exit() 永不 resolve，不 await 会继续往下跑（曾因此写出幽灵模型）
+  await fatal(
+    Object.assign(new Error(`暂不支持的站点。目前支持：${sites.all().flatMap((p) => p.hosts).join(' / ')}`), {
+      code: 'unknown-site',
+    }),
+  );
 }
 
 // platform 是数据命名空间（库目录、判重键）：MakerOnline 的 .cn/.com 共用一个；
@@ -102,8 +143,7 @@ if (!hit) {
 const { site, id } = hit;
 const pack = sites.byName(site);
 if (!pack) {
-  console.error(`站点包没登记：${site}（sites/index.mjs）`);
-  process.exit(2);
+  await fatal(Object.assign(new Error(`站点包没登记：${site}（sites/index.mjs）`), { code: 'unknown-site' }));
 }
 const platform = pack.platform || site;
 progress({ phase: 'fetching', site, id });
@@ -163,6 +203,7 @@ const fileGap = () => new Promise((r) => setTimeout(r, 5000 + Math.random() * 50
 
 // 文件落地
 const saved = [];
+const failed = []; // 失败的文件（名字 + 原因），控制台要能说清「差几个、为什么」
 let linkErr = '';
 if (wantFiles) {
   try {
@@ -179,12 +220,14 @@ if (wantFiles) {
         console.log(`  ✓ ${f.name} (${(bytes / 1048576).toFixed(1)} MB)`);
       } catch (e) {
         linkErr = e.message;
+        failed.push({ name: f.name, reason: classify(e).code });
         console.warn(`  ✗ ${f.name}：${e.message}`);
       }
       progress({ phase: 'downloading', done: i + 1, total: links.length, name: f.name });
     }
   } catch (e) {
     linkErr = e.message;
+    failed.push({ name: '(整批)', reason: classify(e).code });
     console.warn(`  文件下载失败：${e.message}`);
   }
 }
@@ -204,17 +247,22 @@ if (hitHashes.length) {
   await exit(0);
 }
 
-// 一个文件都没下到时记下原因：控制台才能分清「要登录」「站点本来就不给」「解析坏了」
-if (wantFiles && !saved.length) {
-  const hasFiles = (model.files || []).length + (model.rawFiles || []).length > 0;
-  model.noFiles = /机器人|captcha|人机验证/i.test(linkErr)
-    ? 'captcha'
-    : /登录|403|unauthor|forbidden/i.test(linkErr)
-      ? 'login'
-      : hasFiles
-        ? 'parse'
-        : 'none';
-  progress({ phase: 'warning', msg: NO_FILES_TEXT[model.noFiles] });
+// 没下到 / 只下到一部分，都要讲清楚原因，控制台才知道下一步干什么
+const hasFilesMeta = (model.files || []).length + (model.rawFiles || []).length > 0;
+const kind = noFilesKind({ wantFiles, savedCount: saved.length, hasFiles: hasFilesMeta, linkErr });
+if (kind) model.noFiles = kind;
+if (wantFiles && failed.length) {
+  // 下到一部分：保留已下到的，另记失败个数与原因
+  model.filesFailed = {
+    count: failed.length,
+    reasons: [...new Set(failed.map((f) => f.reason))].slice(0, 3),
+  };
+  if (!saved.length) delete model.filesFailed;
+}
+if (kind) {
+  progress({ phase: 'warning', msg: NO_FILES_TEXT[kind] });
+} else if (model.filesFailed) {
+  progress({ phase: 'warning', msg: `有 ${model.filesFailed.count} 个文件没下到（${model.filesFailed.reasons.join('；')}），其余已入库` });
 }
 
 // --no-files 重跑时不要把上一轮已下好的文件记录抹掉

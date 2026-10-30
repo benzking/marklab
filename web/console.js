@@ -194,7 +194,16 @@ function renderWorkbench(w) {
       ${(() => {
         const r = w.noFilesReason || {};
         const row = (k, label) => (r[k] ? `<div class="kv"><em>${label}</em><b>${fmtNum(r[k])}</b></div>` : '');
-        return row('login', '要登录才有文件') + row('captcha', '要过人机验证') + row('parse', '解析没拿到链接') + row('none', '站点本来就不给') + row('unknown', '原因未记（老数据）');
+        const need = (r.login || 0) + (r.captcha || 0) + (r.parse || 0) + (r.none || 0) + (r.unknown || 0);
+        return (
+          row('login', '要登录才有文件') +
+          row('captcha', '要过人机验证') +
+          row('parse', '解析没拿到链接') +
+          row('none', '站点本来就不给') +
+          row('unknown', '原因未记（老数据）') +
+          (r.skipped ? `<div class="kv"><em>这次没下文件（--no-files，不算失败）</em><b>${fmtNum(r.skipped)}</b></div>` : '') +
+          `<div class="kv"><em>合计</em><b>${fmtNum(need)}</b></div>`
+        );
       })()}
     </div>
     <div class="stat">
@@ -280,13 +289,27 @@ function taskDetailRow(t) {
     <div class="tdgrid">
       <div><em>任务</em> ${id} · 第 ${fmtNum(t.rounds || 0)} 轮${t.subId ? ` · 订阅 ${esc(t.subId)}` : ''}</div>
       ${url ? `<div><em>原链接</em> ${url}</div>` : ''}
-      ${t.error ? `<div class="why"><em>错误</em> ${esc(t.error)}</div>` : ''}
+      ${t.error ? `<div class="why"><em>错误</em> ${esc(t.error)}${t.errorCode ? ` <span class="muted small">（${esc(ERR_CODE[t.errorCode] || t.errorCode)}）</span>` : ''}</div>` : ''}
+      ${t.errorDetail ? `<details class="why"><summary class="muted small">原文</summary><pre class="tlog">${esc(t.errorDetail)}</pre></details>` : ''}
       ${t.warning ? `<div class="why"><em>提示</em> ${esc(t.warning)}</div>` : ''}
       <div><em>日志</em>${log ? `<pre class="tlog">${esc(log)}</pre>` : '<span class="muted small">没有日志</span>'}</div>
       <div class="tdacts">${btns.join(' ')}</div>
     </div>
   </td></tr>`;
 }
+
+// 抓取侧的错误分类（grab.mjs 的 ERR_TEXT 同一套口径）
+const ERR_CODE = {
+  login: '要登录',
+  captcha: '要过人机验证',
+  browser: '浏览器没连上',
+  timeout: '超时',
+  network: '网络错误',
+  disk: '磁盘写不进去',
+  parse: '解析失败',
+  'unknown-site': '不认识的站点',
+  unknown: '未知原因',
+};
 
 // 队列总闸：暂停后订阅/批抓/补抓都只排队，只有这里点「继续」或手动开始才放行
 let queueState = { paused: false, queued: 0, running: null };

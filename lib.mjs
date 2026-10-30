@@ -91,6 +91,19 @@ export function sanitize(html) {
   });
 }
 
+/**
+ * 没下到文件的原因（控制台据此说「下一步干什么」）。
+ * skipped 是「这次没下」不是失败；有文件列表却没链接 = parse；站点压根没给 = none。
+ */
+export function noFilesKind({ wantFiles, savedCount, hasFiles, linkErr }) {
+  if (!wantFiles) return 'skipped';
+  if (savedCount > 0) return null;
+  const msg = String(linkErr || '');
+  if (/机器人|captcha|人机验证/i.test(msg)) return 'captcha';
+  if (/登录|403|unauthor|forbidden/i.test(msg)) return 'login';
+  return hasFiles ? 'parse' : 'none';
+}
+
 export const stripTags = (html) => String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
 export const slugify = (s) =>

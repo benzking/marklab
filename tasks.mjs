@@ -277,6 +277,10 @@ function finish(task, ok, error, phase) {
   task.phase = phase || (!ok ? (task.rounds >= MAX_ROUNDS ? 'failed' : 'interrupted') : task.phase === 'duplicate' ? 'duplicate' : 'done');
   task.endedAt = now();
   task.error = ok ? null : error || null; // 成功了就别挂着上一轮的报错
+  if (ok) {
+    task.errorCode = null;
+    task.errorDetail = null;
+  }
   if ((task.progress || {}).done > 0) {
     nextOkAt = Date.now() + MIN_GAP + Math.random() * Math.max(0, MAX_GAP - MIN_GAP);
   } else if (task.startedAt) {
@@ -312,6 +316,15 @@ function handleLine(task, line) {
   try {
     ev = JSON.parse(line.slice(7));
   } catch {
+    return;
+  }
+  if (ev.phase === 'failed') {
+    // 抓取侧已经分好类（login / captcha / browser / timeout / network / disk / parse / unknown-site）
+    task.errorCode = ev.code || 'unknown';
+    task.error = ev.text || '抓取失败';
+    task.errorDetail = ev.detail || '';
+    task.phase = 'failed';
+    persist(task).catch(() => {});
     return;
   }
   if (ev.phase === 'warning') {
@@ -421,7 +434,8 @@ async function pump() {
     err = '抓取进程正常退出，但没走到 done';
   } else {
     ok = false;
-    err = humanError(tail, code);
+    // 抓取侧给了人话就用它；没给（崩溃、被 OOM 杀）才从 stderr 里猜
+    err = task.error || humanError(tail, code);
   }
   if (!ok && phase !== 'stopped') task.rounds += 1;
   finish(task, ok, err, phase);
@@ -505,6 +519,8 @@ export function retry(id) {
   t.rounds = 0;
   t.phase = 'queued';
   t.error = null;
+  t.errorCode = null;
+  t.errorDetail = null;
   t.force = paused; // 暂停中重试：只放行这一条，不解除暂停
   const lane = laneOf(t);
   if (t.force) lane.unshift(t);

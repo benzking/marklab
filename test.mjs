@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { resolveNuxt, sanitize, slugify, autoTags, catIndex, catOf, inside } from './lib.mjs';
+import { autoTags, catIndex, catOf, inside, noFilesKind, resolveNuxt, sanitize, slugify } from './lib.mjs';
 import * as sitePacks from './sites/index.mjs';
 
 // 站点识别搬进站点包了（票 06）。这里留一层薄壳，老断言不用改：包里叫 site，这里叫 name。
@@ -626,4 +626,46 @@ test('登录态：探测卡住时按超时收口，返回 unknown 而不是挂�
   assert.equal(r.status, 'unknown', '卡住要归 unknown');
   assert.ok(r.ms < 5000, '要按超时收口，不是一直等');
   assert.match(r.reason, /超时/, '原因要说清是超时');
+});
+
+test('没下到文件的原因：登录/人机验证/解析/站点不给/这次没下，分得开', () => {
+  const k = (o) => noFilesKind({ wantFiles: true, savedCount: 0, hasFiles: true, linkErr: '', ...o });
+  assert.equal(noFilesKind({ wantFiles: false, savedCount: 0, hasFiles: true, linkErr: '' }), 'skipped', '--no-files 不算失败');
+  assert.equal(k({ linkErr: '下载链接要登录：先在浏览器登录创想云' }), 'login');
+  assert.equal(k({ linkErr: '下载要过人机验证（code 1003）' }), 'captcha', '人机验证要单独一类');
+  assert.equal(k({ linkErr: '拿了 0 个链接' }), 'parse', '有文件列表却没链接 = 解析没拿到');
+  assert.equal(k({ hasFiles: false, linkErr: '' }), 'none', '站点压根没给文件');
+  assert.equal(k({ savedCount: 3 }), null, '下到了就不记原因');
+});
+
+test('失败原因走结构化事件：任务记人话分类，不是 Node.js v20.19.2', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-fail-'));
+  // 假 grab：按抓取侧的口径发一条 failed 事件再退出（模拟「要登录」）
+  await writeFile(
+    path.join(base, 'grab.mjs'),
+    `process.stdout.write('@@TASK {"phase":"failed","code":"login","text":"要登录才有文件：先在浏览器登录该站，再补抓","detail":"memberDownload 拒绝（code 1）"}\\n');
+process.exit(1);
+`,
+  );
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    const a = tasks.enqueue({ url: 'https://space.snapmaker.cn/zh/model/1021-model', source: 'bulk' });
+    let t = tasks.get(a.task.id);
+    for (let i = 0; i < 100 && !t.error; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      t = tasks.get(a.task.id);
+    }
+    console.log(JSON.stringify({ phase: t.phase, code: t.errorCode, error: t.error, detail: t.errorDetail }));
+    process.exit(0);
+  `;
+  const cp = spawn(process.execPath, ['-e', code], { env: { ...process.env, MARKLAB_ROOT: base } });
+  let out = '';
+  cp.stdout.on('data', (d) => (out += d));
+  await new Promise((res) => cp.on('close', res));
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(j.code, 'login', '分类要落到任务上');
+  assert.match(j.error, /要登录才有文件/, '错误串要是人话');
+  assert.doesNotMatch(j.error, /Node\.js v/, '不许把 node 版本横幅当错误');
+  assert.match(j.detail, /memberDownload/, '原文要留着给人看');
+  await rm(base, { recursive: true, force: true });
 });

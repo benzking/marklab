@@ -105,10 +105,13 @@ export async function workbench(force = false) {
     noDesc: models.filter((m) => !String(m.description || '').trim()).length,
     noFiles: models.filter((m) => !(m.savedFiles || []).length).length,
   };
-  // 待补抓 = 站点有文件但本地一个都没落下来
-  const needRefetch = models.filter((m) => !(m.savedFiles || []).length && (m.files || []).length > 0).length;
+  // 待补抓 = 站点有文件、本地一个都没落下来，而且不是「这次没下」
+  const needRefetch = models.filter(
+    (m) => !(m.savedFiles || []).length && (m.files || []).length > 0 && m.noFiles !== 'skipped',
+  ).length;
   // 没文件的分因：要登录 / 站点本来不给 / 解析坏了。补抓前先看这个，别拿同一个原因重试 100 次
-  const noFilesReason = { login: 0, captcha: 0, parse: 0, none: 0, unknown: 0 };
+  // skipped 是「这次没下文件」，不是失败；只有真的想下却没下到才进「待补抓」
+  const noFilesReason = { login: 0, captcha: 0, parse: 0, none: 0, unknown: 0, skipped: 0 };
   for (const m of models) {
     if ((m.savedFiles || []).length) continue;
     noFilesReason[m.noFiles || 'unknown'] += 1;
