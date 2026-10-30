@@ -211,6 +211,15 @@
           <span class="note" id="llm-note"></span>
         </div>
       </div>
+      <h3 class="sub-h">批量动作</h3>
+      <div class="form">
+        <div class="form-foot" style="flex-wrap:wrap;gap:8px">
+          <button class="btn" id="llm-tag-all" type="button">给还没标签的模型打标签</button>
+          <button class="btn" id="refetch-all" type="button">补抓「站点有文件、本地没有」的模型</button>
+          <span class="note" id="batch-note"></span>
+        </div>
+      </div>
+      <div class="sub">打标签每个模型调一次大模型，是真花钱；补抓只是排进队列，照旧走 60–120 秒闸门。</div>
       <h3 class="sub-h">待确认的新词</h3>
       <div id="llm-pending"></div>
     </section>

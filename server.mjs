@@ -379,6 +379,8 @@ const server = http.createServer(async (req, res) => {
 
     // 待补抓：把「站点有文件但本地一个都没有」的模型排进队列
     if (p === '/api/console/refetch' && req.method === 'POST') {
+      const low = await diskTooLow();
+      if (low) return json(res, 400, low);
       const models = await listModels();
       const todo = models.filter((m) => !(m.savedFiles || []).length && (m.files || []).length > 0);
       for (const m of todo) tasks.enqueue({ url: m.sourceUrl, source: 'refetch' });

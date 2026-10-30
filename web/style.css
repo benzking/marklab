@@ -355,3 +355,10 @@ h1.dt { font-size: 24px; line-height: 1.34; margin: 0 0 10px; }
 .pop-link { display: inline-block; margin-top: 8px; font-size: 12px; }
 /* 文件多的时候（创想云一个模型能拆几十个 STL）限高滚动 */
 .filepick { max-height: 340px; overflow: auto; padding-right: 2px; }
+
+/* 大模型标签：和站点标签区分开，一眼看得出是机器打的 */
+.tag.ai {
+  background: #eef2ff;
+  color: #3f51b5;
+  border-color: #d6ddff;
+}

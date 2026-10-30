@@ -747,6 +747,42 @@ function renderSites() {
   }).join('');
 }
 
+// 批量动作：后端早就有了，界面以前没有入口
+function wireBatch() {
+  const tagAll = $('#llm-tag-all');
+  if (tagAll) {
+    tagAll.addEventListener('click', async () => {
+      const note = $('#batch-note');
+      tagAll.disabled = true;
+      note.textContent = '已开始，后台一个个打…';
+      try {
+        const r = await api('/api/console/tags', { method: 'POST', body: { all: true } });
+        note.textContent = `已开始，${fmtNum(r.queued || 0)} 个模型排队打标签（进度看运行日志）`;
+      } catch (e) {
+        note.textContent = `没打成：${e.message}`;
+      } finally {
+        tagAll.disabled = false;
+      }
+    });
+  }
+  const refetchAll = $('#refetch-all');
+  if (refetchAll) {
+    refetchAll.addEventListener('click', async () => {
+      const note = $('#batch-note');
+      refetchAll.disabled = true;
+      try {
+        const r = await api('/api/console/refetch', { method: 'POST', body: {} });
+        note.textContent = `已排进队列 ${r.queued ?? 0} 个（去「抓取任务」看进度）`;
+        loadTasks();
+      } catch (e) {
+        note.textContent = `没排成：${e.message}`;
+      } finally {
+        refetchAll.disabled = false;
+      }
+    });
+  }
+}
+
 function renderLogin(rows) {
   loginRows = Array.isArray(rows) ? rows : [];
   if (!loginRows.length) {
@@ -912,6 +948,7 @@ $('#sub-form').addEventListener('submit', submitSub);
 $('#llm-save').addEventListener('click', saveLlm);
 $('#llm-models').addEventListener('click', fetchModels);
 window.addEventListener('hashchange', route);
+wireBatch();
 
 async function reloadAll() {
   const btn = $('#refresh');

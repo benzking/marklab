@@ -109,6 +109,36 @@ function readableText(hex) {
 let models = [];
 let cats = [];
 const filters = { q: '', site: '', tag: '', format: '', sort: 'new', cat: '', sub: '' };
+const FILTER_KEYS = ['q', 'site', 'cat', 'sub', 'tag', 'format', 'sort'];
+
+// 筛选条件写进 hash：刷新不丢、后退能回到上一组条件
+function filtersToHash() {
+  const p = new URLSearchParams();
+  for (const k of FILTER_KEYS) if (filters[k] && !(k === 'sort' && filters[k] === 'new')) p.set(k, filters[k]);
+  const q = p.toString();
+  return q ? `#${q}` : '';
+}
+
+function filtersFromHash(h) {
+  const p = new URLSearchParams(String(h || '').replace(/^#/, ''));
+  for (const k of FILTER_KEYS) filters[k] = p.get(k) || '';
+  if (!filters.sort) filters.sort = 'new';
+}
+
+function syncHash() {
+  const h = filtersToHash();
+  if (location.hash !== h) location.hash = h; // 进历史，后退能回上一组
+}
+
+// 表单控件跟着 hash 走（刷新/后退时把输入框也还原）
+function syncControls() {
+  const q = $('#q');
+  if (q && q.value !== filters.q) q.value = filters.q;
+  const f = $('#format');
+  if (f) f.value = filters.format;
+  const s = $('#sort');
+  if (s) s.value = filters.sort;
+}
 
 // ── 数据 ───────────────────────────────────────────────────────
 async function load() {
@@ -155,6 +185,7 @@ function onSideClick(e) {
     filters.sub = sub.dataset.l2;
     renderSide();
     render();
+    syncHash();
     return;
   }
   const l1 = e.target.closest('[data-l1]');
@@ -164,6 +195,7 @@ function onSideClick(e) {
   filters.sub = '';
   renderSide();
   render();
+  syncHash();
 }
 
 function siteOf(m) {
@@ -355,6 +387,12 @@ function detail(m) {
               .map((t) => `<span class="tag">${esc(t)}</span>`)
               .join('')}${m.tags.length > 8 ? `<span class="tag">+${m.tags.length - 8}</span>` : ''}</div>`
           : ''}
+        ${(m.llmTags || []).length
+          ? `<div class="badges" style="margin-top:6px">${m.llmTags
+              .slice(0, 10)
+              .map((t) => `<span class="tag ai">${esc(t)}</span>`)
+              .join('')}</div>`
+          : ''}
       </section>
       ${m.profiles?.length ? profilesCard(m) : ''}
       ${platesPanel(m)}
@@ -464,14 +502,16 @@ async function showDetail(dir) {
 }
 
 // ── 动作 ───────────────────────────────────────────────────────
-function setStatus(text, busy) {
+function setStatus(text, busy, retryUrl) {
   const el = $('#status');
   if (!text) {
     el.hidden = true;
     return;
   }
   el.hidden = false;
-  el.innerHTML = `${busy ? '<span class="spin"></span>' : ''}<span id="status-text">${esc(text)}</span>`;
+  el.innerHTML = `${busy ? '<span class="spin"></span>' : ''}<span id="status-text">${esc(text)}</span>${
+    retryUrl ? ` <button class="btn-ghost" data-retry="${esc(retryUrl)}">再试一次</button>` : ''
+  }`;
 }
 
 // 轮询某个任务直到终态（done/duplicate/failed/interrupted/stopped），超时返回 false
@@ -504,10 +544,10 @@ async function addModel(url) {
       $('#add-url').value = '';
       setStatus('已入队，抓完自动进库（速度受限速闸门限制）', false);
     } else {
-      setStatus(`没抓成：\n${j.error || ''}`.slice(0, 1200), false);
+      setStatus(`没抓成：${j.error || ''}`.slice(0, 1200), false, url);
     }
   } catch (e) {
-    setStatus(`请求失败：${e.message}`, false);
+    setStatus(`请求失败：${e.message}`, false, url);
   } finally {
     $('#add-btn').disabled = false;
   }
@@ -554,14 +594,17 @@ $('#add-form').addEventListener('submit', (e) => {
 $('#q').addEventListener('input', (e) => {
   filters.q = e.target.value.trim();
   render();
+  syncHash();
 });
 $('#format').addEventListener('change', (e) => {
   filters.format = e.target.value;
   render();
+  syncHash();
 });
 $('#sort').addEventListener('change', (e) => {
   filters.sort = e.target.value;
   render();
+  syncHash();
 });
 $('#side').addEventListener('click', onSideClick);
 document.addEventListener('click', (e) => {
@@ -570,6 +613,7 @@ document.addEventListener('click', (e) => {
     filters.site = site.dataset.site;
     renderChips();
     render();
+    syncHash();
     return;
   }
   const tag = e.target.closest('[data-tag]');
@@ -577,8 +621,11 @@ document.addEventListener('click', (e) => {
     filters.tag = tag.dataset.tag;
     renderChips();
     render();
+    syncHash();
     return;
   }
+  const retry = e.target.closest('[data-retry]');
+  if (retry) return addModel(retry.dataset.retry);
   const re = e.target.closest('[data-refetch]');
   if (re) return refetch(re.dataset.refetch);
   const del = e.target.closest('[data-del]');
@@ -590,11 +637,16 @@ function route() {
   const h = location.hash;
   if (h.startsWith('#m=')) {
     showDetail(decodeURIComponent(h.slice(3)));
-  } else {
-    $('#detail-view').hidden = true;
-    $('#list-view').hidden = false;
-    window.scrollTo(0, 0);
+    return;
   }
+  $('#detail-view').hidden = true;
+  $('#list-view').hidden = false;
+  filtersFromHash(h);
+  syncControls();
+  renderChips();
+  renderSide();
+  render();
+  window.scrollTo(0, 0);
 }
 
 load().then(route);
