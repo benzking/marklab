@@ -1,6 +1,6 @@
 // 四站搜索适配器：统一 Item 形状 + 按站限速（ADR-0005 第 3 节）。
 // 网络层和归一化层分开，纯函数能被自检直接跑；字段缺失一律给安全默认值，不抛。
-import { inPage, siteOf } from './channel.mjs';
+import { siteOf } from './channel.mjs';
 import { str, num, iso } from './lib.mjs';
 import * as sites from './sites/index.mjs';
 
@@ -34,25 +34,6 @@ export function parseUserUrl(input) {
 
 // ── 归一化（纯函数） ────────────────────────────────────────────
 
-
-export function normalizeMakerworld(raw) {
-  const id = raw?.id == null ? '' : String(raw.id);
-  return {
-    site: 'makerworld',
-    id,
-    title: str(raw?.title) || '',
-    url: id ? `https://makerworld.com.cn/zh/models/${id}` : '',
-    cover: str(raw?.cover),
-    author: str(raw?.designCreator?.name),
-    likes: num(raw?.likeCount),
-    downloads: num(raw?.downloadCount),
-    collects: num(raw?.collectionCount),
-    comments: num(raw?.commentCount),
-    picked: Boolean(raw?.isStaffPicked),
-    publishedAt: iso(raw?.createTime),
-    tags: Array.isArray(raw?.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
-  };
-}
 
 export function normalizeMakeronline(raw) {
   const id = raw?.mold_id == null ? '' : String(raw.mold_id);
@@ -105,34 +86,6 @@ function throttle(site) {
 
 // ── 网络层 ──────────────────────────────────────────────────────
 
-const MAKERWORLD_ORDER = {
-  downloads: 'downloadCount',
-  likes: 'likeCount',
-  newest: 'newUploads',
-  hot: 'hotScore',
-  score: 'score',
-};
-
-async function fetchMakerworld(keyword, page, pageSize, sort) {
-  const orderBy = MAKERWORLD_ORDER[sort] || 'score';
-  const url = `https://makerworld.com.cn/zh/search/models?keyword=${encodeURIComponent(keyword)}&orderBy=${orderBy}&page=${page}`;
-  // pageSize 不可调，站点固定一页 20 条
-  const data = await inPage(
-    'makerworld',
-    url,
-    () => {
-      const text = document.querySelector('#__NEXT_DATA__')?.textContent;
-      if (!text) return null;
-      const pp = JSON.parse(text)?.props?.pageProps;
-      return { total: pp?.total, designs: pp?.designs };
-    },
-    undefined,
-    { wait: 2000 }, // 首屏 hydrate 完 designs 才挂上
-  );
-  if (!data || !Array.isArray(data.designs)) throw new Error('MakerWorld 页面没拿到 __NEXT_DATA__.designs（浏览器没连上或站点改版）');
-  return { total: num(data.total), items: data.designs.map(normalizeMakerworld) };
-}
-
 async function fetchMakeronline(keyword, page, pageSize, sort) {
   // 搜索接口没有排序参数，sort 只保留在返回里
   const r = await fetch('https://www.makeronline.cn/api/search/model', {
@@ -147,9 +100,8 @@ async function fetchMakeronline(keyword, page, pageSize, sort) {
   return { total: num(j.data.page?.total), items: list.map(normalizeMakeronline) };
 }
 
-// 还没搬进站点包的两个站（票 03–05 逐个搬走）
+// 还没搬进站点包的站（票 04–05 逐个搬走）
 const FETCHERS = {
-  makerworld: fetchMakerworld,
   makeronline: fetchMakeronline,
 };
 
@@ -176,26 +128,7 @@ async function fetchMakeronlineUser(uid, page, pageSize) {
   };
 }
 
-async function fetchMakerworldUser(handle, page) {
-  const url = `https://makerworld.com.cn/zh/@${encodeURIComponent(handle)}/upload?page=${page}`;
-  const data = await inPage(
-    'makerworld',
-    url,
-    () => {
-      const text = document.querySelector('#__NEXT_DATA__')?.textContent;
-      if (!text) return null;
-      const pp = JSON.parse(text)?.props?.pageProps;
-      return { total: pp?.total, designs: pp?.designs };
-    },
-    undefined,
-    { wait: 2000 },
-  );
-  if (!data || !Array.isArray(data.designs)) throw new Error('MakerWorld 用户页没拿到 __NEXT_DATA__.designs（浏览器没连上或站点改版）');
-  return { total: num(data.total), items: data.designs.map((raw) => normalizeMakerworld({ ...raw, cover: raw.coverUrl })) };
-}
-
 const USER_FETCHERS = {
-  makerworld: fetchMakerworldUser,
   makeronline: fetchMakeronlineUser,
 };
 
@@ -236,10 +169,6 @@ export async function search(site, keyword, { page = 1, sort = 'downloads', page
 // ── 自检：纯函数，不联网、不起浏览器 ────────────────────────────
 
 function demo() {
-  const m = normalizeMakerworld({ id: 7, title: 'T', tags: ['benchy', 1], designCreator: { name: 'B' }, createTime: '2024-05-23T09:28:27Z' });
-  console.assert(m.url === 'https://makerworld.com.cn/zh/models/7', 'MakerWorld 详情页 URL');
-  console.assert(m.publishedAt === '2024-05-23T09:28:27.000Z' && m.tags.length === 1, 'MakerWorld 时间/标签');
-
   const o = normalizeMakeronline({ mold_id: 1, title: 'O', target_url: 'https://www.makeronline.cn/model/O/1.html' });
   console.assert(o.id === '1' && o.collects === null && o.comments === null, 'MakerOnline 无收藏/评论');
   console.assert(o.publishedAt === null && o.tags.length === 0, 'MakerOnline 缺字段默认');

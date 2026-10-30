@@ -174,6 +174,9 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 - **MakerWorld 没有「按机型」的单独 3mf**：`?machine=N2S / O1C2` 返回的还是同一个文件（同名同大小同 URL），
   机型只是一张兼容列表。A1 / H2C 在详情页当页签展示，不再尝试下三份。
 - MakerWorld 原始上传件（`designExtension.model_files`）的下载接口还没找到，名字与大小记在 `model.json` 里。
+- **MakerWorld 的 f3mf 现在会撞人机验证**：即使已登录，接口也回 `418` + geetest「我们需要确认您不是机器人」。
+  这种模型记 `noFiles: "captcha"`，控制台「待补抓」单独一行；要下就得在浏览器里打开该模型页过一次验证。
+  这是库里 282 个 MakerWorld 模型只有 1 个有文件的主要原因。
 - 创想云只下「模型文件」列表（STL/CAD）；打印配置只抓元数据（3mf 本体没有公开下载接口）；配套文档已抓，下载要登录态。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。

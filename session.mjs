@@ -6,22 +6,8 @@ import * as sites from './sites/index.mjs';
 // 顺序就是控制台里的显示顺序；标签优先取站点包自己的
 const ORDER = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com'];
 
-// 还没搬进站点包的站：token cookie 名 + 鉴权接口。票 03–05 搬完这张表就空了。
+// 还没搬进站点包的站：token cookie 名 + 鉴权接口。票 04–05 搬完这张表就空了。
 const PROBES = {
-  makerworld: {
-    label: 'MakerWorld',
-    // 登录 cookie 是 HttpOnly，且该站挡 TLS 指纹，只能走真浏览器页内 fetch
-    async run() {
-      const r = await ch.inPage('makerworld', 'https://makerworld.com.cn/zh', async () => {
-        const res = await fetch('/api/v1/user-service/my/profile');
-        if (!res.ok) return { status: res.status };
-        const j = await res.json().catch(() => null);
-        return { status: res.status, name: j?.name || j?.userName || j?.data?.name };
-      });
-      if (!r) return offline();
-      return r.status === 200 ? { ok: true, name: r.name || '已登录' } : { ok: false, status: 'logged-out' };
-    },
-  },
   'makeronline.cn': {
     label: 'MakerOnline.cn',
     host: 'https://www.makeronline.cn',

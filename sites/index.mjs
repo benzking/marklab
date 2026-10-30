@@ -2,8 +2,9 @@
 // 公共层不许出现 `if (site === ...)`，站点之间的差异都在各自的包里。
 import snapmaker from './snapmaker.mjs';
 import creality from './creality.mjs';
+import makerworld from './makerworld.mjs';
 
-const PACKS = [snapmaker, creality];
+const PACKS = [snapmaker, creality, makerworld];
 const BY_NAME = new Map(PACKS.map((p) => [p.site, p]));
 
 export const all = () => PACKS;

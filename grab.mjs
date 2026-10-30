@@ -29,6 +29,7 @@ const safeDecode = (s) => {
 // 没下到文件时给控制台看的原因
 const NO_FILES_TEXT = {
   login: '文件一个都没下到：站点要求登录态',
+  captcha: '文件一个都没下到：站点要过人机验证（在浏览器里打开该模型页过一次，再补抓）',
   parse: '文件一个都没下到：站点给了文件列表但没拿到直链（可能改版了）',
   none: '站点没给文件直链（这类模型只能在站点里下）',
 };
@@ -97,146 +98,7 @@ async function download(target, dest, site) {
   throw lastErr;
 }
 
-// ── 还没搬进站点包的适配器（票 03–05 搬完这张表就空了）────────────────
-
-// MakerWorld：整站对非浏览器 UA 返 403，详情和 f3mf 都得在页面里取
-const makerworld = {
-  async meta(id) {
-    const js = `(async () => {
-      const j = await (await fetch('/api/v1/design-service/design/${id}', { headers: { accept: 'application/json' } })).json();
-      const pic = (p) => (p && (p.url || p)) || '';
-      const num = (v) => (typeof v === 'string' ? Number(v) : v);
-      const filamentsOf = (arr) => (arr || []).map(f => ({ type: f.type, color: f.color, usedG: num(f.usedG), usedM: num(f.usedM) }));
-      const platesOf = (mi) => ((mi && mi.plates) || []).map(p => ({
-        index: p.index, name: p.name, timeSec: p.prediction, weightG: p.weight,
-        thumb: pic(p.thumbnail), filaments: filamentsOf(p.filaments),
-      }));
-      return {
-        title: j.title, author: (j.designCreator && (j.designCreator.name || j.designCreator.handle)) || '',
-        authorUid: j.designCreator?.uid || null,
-        authorAvatar: (j.designCreator && (j.designCreator.avatar || j.designCreator.avatarUrl)) || '',
-        description: j.summary || j.description || '', cover: j.coverUrl || j.coverLandscape || '',
-        likes: j.likeCount, downloads: j.downloadCount, collects: j.collectionCount, comments: j.commentCount,
-        createTime: j.createTime, updateTime: j.updateTime, tags: (j.tags || []).map(t => t.name || t).filter(Boolean),
-        picked: Boolean(j.isStaffPicked),
-        category: ((j.categories || [])[0] && (j.categories[0].name || j.categories[0].nameTranslated)) || '',
-        instances: (j.instances || []).map(i => {
-          const mi = (i.extention && i.extention.modelInfo) || {};
-          const compat = mi.compatibility ? [mi.compatibility] : [];
-          return {
-            id: i.id, title: i.title, cover: pic(i.cover), pictures: (i.pictures || []).map(pic).filter(Boolean),
-            downloads: i.downloadCount, prints: i.printCount, isDefault: i.isDefault,
-            timeSec: i.prediction, weightG: i.weight, materialCnt: i.materialCnt, needAms: i.needAms,
-            instanceCreator: i.instanceCreator ? (i.instanceCreator.name || true) : null,
-            creatorUid: i.instanceCreator?.uid || null,
-            ratingCount: i.ratingCount, ratingTotal: i.ratingScoreTotal,
-            projectSettings: mi.projectSettings || {}, plates: platesOf(mi),
-            filaments: filamentsOf(i.instanceFilaments),
-            machines: [...compat, ...(mi.otherCompatibility || [])].map(m => ({ name: m.devProductName, code: m.devModelName, nozzle: m.nozzleDiameter })),
-          };
-        }),
-        rawFiles: ((j.designExtension && j.designExtension.model_files) || []).map(f => ({ name: f.modelName, size: f.modelSize, type: f.modelType, origin: 'author' })),
-      };
-    })()`;
-    const { value: d, via } = await evalInPage(`https://makerworld.com.cn/zh/models/${id}`, js, { wait: 6000 });
-    const inst = d.instances.find((i) => i.isDefault) || d.instances[0] || {};
-    return {
-      platform: 'makerworld',
-      id,
-      sourceUrl: `https://makerworld.com.cn/zh/models/${id}`,
-      title: d.title,
-      author: d.author,
-      authorUid: d.authorUid,
-      authorAvatar: d.authorAvatar,
-      description: sanitize(d.description),
-      images: [d.cover, ...d.instances.flatMap((i) => [i.cover, ...i.pictures])].filter(Boolean),
-      stats: { downloads: d.downloads },
-      picked: Boolean(d.picked),
-      category: d.category || '',
-      tags: d.tags,
-      publishedAt: d.createTime,
-      print: {
-        profileTitle: inst.title,
-        thumb: inst.cover,
-        timeSec: inst.timeSec,
-        timeText: fmtHours(inst.timeSec),
-        weightG: inst.weightG,
-        plates: inst.plates?.length || 0,
-        nozzle: inst.machines?.[0]?.nozzle ? `${inst.machines[0].nozzle} mm` : '',
-        layerHeight: inst.projectSettings?.layerHeight,
-        wallLoops: inst.projectSettings?.wallLoops,
-        infill: inst.projectSettings?.sparseInfillDensity,
-        filaments: inst.filaments || [],
-        plateList: inst.plates || [],
-        machines: inst.machines || [],
-        source: via,
-      },
-      profiles: d.instances.map((i) => ({
-        id: i.id,
-        name: i.title,
-        machine: i.machines?.[0]?.name || '',
-        machines: (i.machines || []).map((x) => x.name),
-        plates: i.plates?.length || 0,
-        plateList: i.plates || [],
-        timeSec: i.timeSec,
-        timeText: fmtHours(i.timeSec),
-        weightG: i.weightG ? Math.round(i.weightG * 10) / 10 : null,
-        nozzle: i.machines?.[0]?.nozzle ? `${i.machines[0].nozzle} mm` : '',
-        layerHeight: i.projectSettings?.layerHeight || '',
-        wallLoops: i.projectSettings?.wallLoops || '',
-        infill: i.projectSettings?.sparseInfillDensity || '',
-        bed: '',
-        size: 0,
-        filaments: i.filaments || [],
-        thumbnail: i.cover || '',
-        isDefault: i.isDefault,
-        creatorUid: i.creatorUid,
-        url: `https://makerworld.com.cn/zh/models/${id}#profileId-${i.id}`,
-      })),
-      files: d.rawFiles,
-      fileIds: d.instances.map((i) => i.id),
-      via,
-    };
-  },
-  // 打印配置 3mf：每个 instance 一份。别人加的配置（instanceCreator ≠ 作者）标 other，判重时不比。
-  async fileLinks(model) {
-    const js = `(async () => {
-      const out = [];
-      const errs = [];
-      for (const [id, mine] of ${JSON.stringify(
-        (model.fileIds || []).map((id, i) => {
-          const c = model.profiles?.[i]?.creatorUid;
-          return [id, !c || !model.authorUid || String(c) === String(model.authorUid)];
-        }),
-      )}) {
-        const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf', { headers: { accept: 'application/json' } });
-        if (!r.ok) {
-          let t = '';
-          try { t = (await r.json()).error || ''; } catch {}
-          errs.push(t || 'HTTP ' + r.status);
-          // 没登录时整站都不给文件，别再一个个配置试下去，直接放弃等登录后统一补抓
-          if (r.status === 403 || /登录|forbidden|unauthor/i.test(t)) break;
-          continue;
-        }
-        const j = await r.json();
-        if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine });
-      }
-      return { out, errs };
-    })()`;
-    const { value: res } = await evalInPage(model.sourceUrl, js, { wait: 6000 });
-    if (!res.out.length && res.errs.length) {
-      const first = res.errs[0];
-      throw new Error(/登录|403|forbidden|unauthor/i.test(first) ? `MakerWorld 没登录，拿不到文件：${first}` : first);
-    }
-    return res.out.map((r) => ({
-      name: r.name || 'model',
-      url: r.url,
-      size: r.size,
-      kind: 'profile',
-      origin: r.mine ? 'author' : 'other',
-    }));
-  },
-};
+// ── 还没搬进站点包的适配器（票 04–05 搬完这张表就空了）────────────────
 
 // MakerOnline（纵维立方）：Nuxt 2，页面里 window.__NUXT__ 是 IIFE 打包的数据。
 // 绝不在服务端求值它——那等于让站点在我们的进程里执行任意代码（实测能拿到 process）。
@@ -397,8 +259,8 @@ const makeronline = {
   },
 };
 
-// 还没搬进站点包的两个站（票 03–05 逐个搬走，搬完这张表就空了）
-const ADAPTERS = { makerworld, makeronline };
+// 还没搬进站点包的站（票 04–05 逐个搬走，搬完这张表就空了）
+const ADAPTERS = { makeronline };
 
 // ── 主流程 ──────────────────────────────────────────────────────
 // 先问站点包（sites/index.mjs），包不认再退回旧适配器表
@@ -511,7 +373,13 @@ if (dupHit && !dupHit.same && saved.length && (await dup.confirm(dupHit.of, save
 // 一个文件都没下到时记下原因：控制台才能分清「要登录」「站点本来就不给」「解析坏了」
 if (wantFiles && !saved.length) {
   const hasFiles = (model.files || []).length + (model.rawFiles || []).length > 0;
-  model.noFiles = /登录|403|unauthor|forbidden/i.test(linkErr) ? 'login' : hasFiles ? 'parse' : 'none';
+  model.noFiles = /机器人|captcha|人机验证/i.test(linkErr)
+    ? 'captcha'
+    : /登录|403|unauthor|forbidden/i.test(linkErr)
+      ? 'login'
+      : hasFiles
+        ? 'parse'
+        : 'none';
   progress({ phase: 'warning', msg: NO_FILES_TEXT[model.noFiles] });
 }
 

@@ -201,6 +201,7 @@ library/<platform>-<id>/
 | 值 | 含义 | 处理 |
 |---|---|---|
 | `login` | 站点要登录才给文件 | 登录后统一补抓 |
+| `captcha` | 站点要人机验证（MakerWorld 实测：418 + geetest「我们需要确认您不是机器人」） | 在浏览器里打开该模型页过一次验证，再补抓 |
 | `parse` | 有文件但解析没拿到链接 | 修解析器，然后重抓 |
 | `none` | 站点本来就不提供下载 | 不再重试 |
 | `skipped` | 这一轮压根没尝试下载（`--no-files`） | 不算问题 |
@@ -355,6 +356,8 @@ library/<platform>-<id>/
 - 探测请求必须有超时（15 秒）；任一站点挂住不许把整个 `/api/console/login` 拖死。
 - MakerWorld 检测到 `logged-out` 时**不抓文件**，直接记 `noFiles: "login"`；
   用户登录后统一补抓（控制台的「待补抓」）。
+- MakerWorld 的 f3mf 在「已登录」时仍可能撞人机验证（实测 418 + geetest）：这是 `captcha`，
+  **不是** `login`。两种情况都只发一次请求就放弃，不逐个打印配置重试。
 - MakerOnline `.cn` 与 `.com` 的登录态互不相干，**cookie 按域取、不许合并进同一个请求头**。
   同一个 `platform` 下两个域各自探测、各自报状态。
 - **缓存与刷新**：登录态缓存 60 秒、cookie 缓存 300 秒——工作台每次刷新都打一遍五个探测
@@ -500,6 +503,7 @@ queued → fetching → parsing → downloading → done
 | `unknown-site` | 网址不在站点包白名单 | 换个网址 | 没有（终态） |
 | `parse` | 站点结构变了，解析点没拿到数据 | 等修解析器 | 没有（重试还是同样的页面） |
 | `login` | 站点要登录才给文件 | 登录后点补抓 | 登录后才有 |
+| `captcha` | 站点要人机验证（418 + geetest） | 浏览器里过一次验证再补抓 | 过验证后才有 |
 | `browser` | 连不上 CDP 9223 | 开 Chromium | 连上之后才有 |
 | `timeout` | 30 分钟没跑完 | 看是不是站点卡了 | 有一次 |
 | `network` | 连接被拒/重置/5xx | 等一会 | 有 |
@@ -526,7 +530,8 @@ queued → fetching → parsing → downloading → done
 11. 两个模型之间 → 间隔 ≥ 60 秒，**包括上一个任务没下到文件的**。
 12. 重启服务 → 暂停状态保持；`nextOkAt` 没走完不许开跑。
 13. 点「暂停抓取」→ `data/queue.json` 写 `paused:true`；重启服务 → 仍是暂停。
-14. MakerWorld 未登录抓一个模型 → 不下载文件，`noFiles: "login"`，任务 `done` 不是 `failed`。
+14. MakerWorld 未登录抓一个模型 → 不下载文件，`noFiles: "login"`，任务 `done` 不是 `failed`；
+    撞人机验证时记 `captcha`。两种情况都只发一次 f3mf 请求。
 15. 抓取子进程被 SIGTERM / 卡住 30 分钟 → 关掉自己开的标签页再退出，任务记「超时」。
 16. 同一网址连点两次「抓取」→ 队列里只有一条。
 17. `POST /api/grab` → 1 秒内返回 202 + taskId。

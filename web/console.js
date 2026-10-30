@@ -194,7 +194,7 @@ function renderWorkbench(w) {
       ${(() => {
         const r = w.noFilesReason || {};
         const row = (k, label) => (r[k] ? `<div class="kv"><em>${label}</em><b>${fmtNum(r[k])}</b></div>` : '');
-        return row('login', '要登录才有文件') + row('parse', '解析没拿到链接') + row('none', '站点本来就不给') + row('unknown', '原因未记（老数据）');
+        return row('login', '要登录才有文件') + row('captcha', '要过人机验证') + row('parse', '解析没拿到链接') + row('none', '站点本来就不给') + row('unknown', '原因未记（老数据）');
       })()}
     </div>
     <div class="stat">

@@ -248,8 +248,8 @@ test('站点包与公共层认同一个网址，包认不出就交回 matchPlatf
   const c = sites.match('https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7');
   assert.deepEqual([c.name, c.id], ['creality', '68fddae0d894ed5f6ce386a7']);
   // 还没搬进包的站，包不认、公共层仍认（迁移期两条路并存）
-  assert.equal(sites.match('https://makerworld.com.cn/zh/models/195581'), null);
-  assert.equal(matchPlatform('https://makerworld.com.cn/zh/models/195581')?.name, 'makerworld');
+  assert.equal(sites.match('https://www.makeronline.cn/zh/model/x/207581.html'), null);
+  assert.equal(matchPlatform('https://www.makeronline.cn/zh/model/x/207581.html')?.name, 'makeronline');
 });
 
 test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () => {
