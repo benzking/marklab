@@ -263,7 +263,7 @@ function taskRow(t) {
   const open = id && openTasks.has(t.id);
   const err = t.error ? `<div class="why" title="${esc(t.error)}">${esc(t.error)}</div>` : '';
   const warn = !err && t.warning ? `<div class="why" title="${esc(t.warning)}">${esc(t.warning)}</div>` : '';
-  const row = `<tr class="task-row${open ? ' open' : ''}" data-task="${id}">
+  const row = `<tr class="task-row${open ? ' open' : ''}" data-task="${id}" tabindex="0" role="button" aria-expanded="${open ? 'true' : 'false'}">
     <td class="time">${fmtTime(t.createdAt)}</td>
     <td>${siteDot(t.site || siteOfUrl(t.url))}${esc(siteName(t.site || siteOfUrl(t.url)))}</td>
     <td><div class="tt" title="${esc(title)}">${esc(title)}</div></td>
@@ -436,13 +436,13 @@ function lastResultText(s) {
 
 function subListItem(s) {
   const on = selectedSub === s.id;
-  return `<div class="sub-item${on ? ' on' : ''}" data-pick="${esc(s.id)}">
+  return `<button type="button" class="sub-item${on ? ' on' : ''}" data-pick="${esc(s.id)}">
     <div class="sub-item-top">
       <span class="sub-name">${esc(s.name || s.id)}</span>
       <span class="tag ${s.enabled ? 'ok' : ''}">${s.enabled ? '启用' : '停用'}</span>
     </div>
     <div class="sub-line dim">${esc(lastResultText(s))} · ${s.lastRunAt ? fmtTime(s.lastRunAt) : '还没跑过'}</div>
-  </div>`;
+  </button>`;
 }
 
 function renderSubs() {
@@ -942,6 +942,14 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// 任务行是 <tr>，键盘要能展开：Enter / 空格当成点击
+$('#task-rows').addEventListener('keydown', (e) => {
+  if (e.key !== 'Enter' && e.key !== ' ') return;
+  const row = e.target.closest('.task-row');
+  if (!row) return;
+  e.preventDefault();
+  row.click();
+});
 $('#login-recheck').addEventListener('click', () => loadSites(true));
 $('#refresh').addEventListener('click', () => reloadAll());
 $('#sub-form').addEventListener('submit', submitSub);

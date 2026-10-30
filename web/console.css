@@ -4,7 +4,7 @@
   --soft: #f4f5f7;
   --line: #eceef1;
   --fg: #17191d;
-  --dim: #8b909a;
+  --dim: #626a78; /* 12.5px 小字要 4.5:1 */
   --accent: #00b96b;
   --danger: #b4340f;
   --creality: #2f6bff;
@@ -139,7 +139,7 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
   background: #fff; color: var(--fg); font: inherit; font-size: 13.5px; min-width: 0;
 }
 .field textarea { height: auto; min-height: 58px; padding: 8px 10px; resize: vertical; line-height: 1.5; }
-.field input:focus, .field select:focus, .field textarea:focus { outline: none; border-color: #cfd4dd; }
+.field input:focus-visible, .field select:focus-visible, .field textarea:focus-visible { outline: 2px solid #2f6df6; outline-offset: 1px; border-color: #cfd4dd; }
 .checks { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; font-size: 13.5px; min-height: 34px; }
 .checks label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
 .switch { display: inline-flex; align-items: center; gap: 8px; font-size: 13.5px; cursor: pointer; min-height: 34px; }
@@ -279,4 +279,26 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
 /* 剩余空间低于 10 GB 标黄：磁盘满了会写到一半失败 */
 .kv.warn b {
   color: var(--warn, #d9a441);
+}
+
+/* 键盘焦点看得见（原来 console 里也是 outline:none） */
+:focus-visible {
+  outline: 2px solid #2f6df6;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+
+button.sub-item {
+  font: inherit;
+  color: inherit;
+  background: none;
+  border: 0;
+  text-align: left;
+  width: 100%;
+  cursor: pointer;
+}
+
+.task-row:focus-visible {
+  outline: 2px solid #2f6df6;
+  outline-offset: -2px;
 }

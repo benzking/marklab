@@ -14,6 +14,7 @@
   </a>
   <form class="add" id="add-form">
     <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14" stroke-linecap="round"/></svg>
+    <label class="sr-only" for="add-url">要抓取的模型页网址</label>
     <input id="add-url" type="url" placeholder="粘贴模型页网址，回车收进来（创想云 / MakerWorld / Snapmaker / MakerOnline）" autocomplete="off" spellcheck="false">
     <button type="submit" id="add-btn">添加</button>
   </form>
@@ -21,7 +22,7 @@
   <a class="toplink" href="/console">控制台</a>
 </header>
 
-<div class="status" id="status" hidden><span class="spin"></span><span id="status-text">抓取中…</span></div>
+<div class="status" id="status" role="status" aria-live="polite" hidden><span class="spin"></span><span id="status-text">抓取中…</span></div>
 
 <main id="list-view">
   <div class="layout">
@@ -32,12 +33,15 @@
       <div class="sec-head">
         <h2>最新加入</h2>
         <div class="sec-tools">
+          <label class="sr-only" for="q">搜标题、作者或标签</label>
           <input id="q" type="search" placeholder="搜标题 / 作者 / 标签">
+          <label class="sr-only" for="format">按文件格式筛选</label>
           <select id="format">
             <option value="">全部格式</option>
             <option value="3mf">3MF</option>
             <option value="stl">STL</option>
           </select>
+          <label class="sr-only" for="sort">排序方式</label>
           <select id="sort">
             <option value="new">最新加入</option>
             <option value="title">按标题</option>

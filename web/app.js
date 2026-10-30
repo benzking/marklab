@@ -156,23 +156,23 @@ const inCat = (m, l1, l2) => (l1 === '_' ? !m.cat : !!m.cat && m.cat.l1 === l1 &
 
 function renderSide() {
   const n = (l1, l2) => models.filter((m) => inCat(m, l1, l2)).length;
-  const html = [`<div class="item${filters.cat ? '' : ' on'}" data-l1="">${ICON.grid}<span>全部模型</span><em>${models.length}</em></div>`];
+  const html = [`<button type="button" class="item${filters.cat ? '' : ' on'}" data-l1="">${ICON.grid}<span>全部模型</span><em>${models.length}</em></button>`];
   for (const l1 of cats) {
     const total = n(l1.id);
     if (!total) continue;
     html.push(
-      `<div class="item${filters.cat === l1.id ? ' on' : ''}" data-l1="${esc(l1.id)}">${ICON.folder}<span>${esc(l1.name)}</span><em>${total}</em></div>`,
+      `<button type="button" class="item${filters.cat === l1.id ? ' on' : ''}" data-l1="${esc(l1.id)}">${ICON.folder}<span>${esc(l1.name)}</span><em>${total}</em></button>`,
     );
     if (filters.cat !== l1.id) continue;
     const subs = l1.children.filter((c) => n(l1.id, c.id));
     if (!subs.length) continue;
     html.push(
       `<div class="subs"><span class="sub${filters.sub ? '' : ' on'}" data-l2="">全部</span>${subs
-        .map((c) => `<span class="sub${filters.sub === c.id ? ' on' : ''}" data-l2="${esc(c.id)}">${esc(c.name)}<em>${n(l1.id, c.id)}</em></span>`)
+        .map((c) => `<button type="button" class="sub${filters.sub === c.id ? ' on' : ''}" data-l2="${esc(c.id)}">${esc(c.name)}<em>${n(l1.id, c.id)}</em></button>`)
         .join('')}</div>`,
     );
   }
-  if (models.some((m) => !m.cat)) html.push(`<div class="item${filters.cat === '_' ? ' on' : ''}" data-l1="_">${ICON.folder}<span>未分类</span><em>${n('_')}</em></div>`);
+  if (models.some((m) => !m.cat)) html.push(`<button type="button" class="item${filters.cat === '_' ? ' on' : ''}" data-l1="_">${ICON.folder}<span>未分类</span><em>${n('_')}</em></button>`);
   html.push(
     `<div class="side-foot"><b>数据来源</b><span>创想云 · MakerWorld<br>Snapmaker · MakerOnline</span><span>${models.length} 个模型，文件存在本地</span></div>`,
   );
@@ -269,7 +269,7 @@ function card(m) {
   ].filter(Boolean).join(' · ');
   const ava = `<span class="ava" style="--a:${avaHue(m.author)}">${esc(String(m.author || '?').slice(0, 1))}</span>`;
   return `<a class="card" href="#m=${encodeURIComponent(m.dir)}" title="${esc(m.title)}">
-    <div class="cover">${cover ? `<img src="${cover.startsWith('http') ? esc(cover) : `/library/${esc(m.dir)}/${esc(cover)}`}" alt="" loading="lazy">` : ''}
+    <div class="cover">${cover ? `<img src="${cover.startsWith('http') ? esc(cover) : `/library/${esc(m.dir)}/${esc(cover)}`}" alt="${esc(m.title || '')}" loading="lazy">` : ''}
       <span class="site" style="--c:${s.color}"><i></i>${esc(s.label)}</span>
       ${fmts.length ? `<span class="fmt">${esc(fmts.join(' / '))}</span>` : ''}</div>
     <div class="body">
@@ -293,7 +293,7 @@ function renderHero() {
   const slides = pool
     .map(
       (m, i) => `<a class="slide${i ? '' : ' on'}" href="#m=${encodeURIComponent(m.dir)}">
-      <img src="${m.cover.startsWith('http') ? esc(m.cover) : `/library/${esc(m.dir)}/${esc(m.cover)}`}" alt="" ${i ? 'loading="lazy"' : ''}>
+      <img src="${m.cover.startsWith('http') ? esc(m.cover) : `/library/${esc(m.dir)}/${esc(m.cover)}`}" alt="${esc(m.title || '')}" ${i ? 'loading="lazy"' : ''}>
       <span class="cap"><b>${esc(m.title)}</b><span>${esc(siteOf(m).label)} · ${fmtN(m.stats?.downloads)} 次下载 · ${esc(
         m.author || '未知作者',
       )}</span></span></a>`,
@@ -309,7 +309,9 @@ function renderHero() {
     .join('');
   const el = $('#hero');
   el.hidden = false;
-  el.innerHTML = `<div class="banner">${slides}<div class="dots">${pool.map((_, i) => `<i${i ? '' : ' class="on"'} data-i="${i}"></i>`).join('')}</div></div>
+  el.innerHTML = `<div class="banner">${slides}<div class="dots">${pool
+      .map((_, i) => `<button type="button" class="${i ? '' : 'on'}" data-i="${i}" aria-label="第 ${i + 1} 张"></button>`)
+      .join('')}</div></div>
     <div class="explore"><h3>探索更多</h3><div class="tiles">${tiles}</div></div>`;
 
   let i = 0;
@@ -361,7 +363,7 @@ function detail(m) {
   <div class="dgrid">
     <div>
       <section class="hero">
-        ${imgs[0] ? `<img class="dhero" src="${esc(imgs[0])}" alt="">` : ''}
+        ${imgs[0] ? `<img class="dhero" src="${esc(imgs[0])}" alt="${esc(m.title || '')}">` : ''}
         ${imgs.length > 1 ? `<div class="thumbs">${imgs
           .map((src, i) => `<img src="${esc(src)}" data-src="${esc(src)}" class="${i === 0 ? 'on' : ''}" alt="">`)
           .join('')}</div>` : ''}
@@ -734,7 +736,7 @@ function profilesCard(m) {
   const rows = m.profiles
     .map((p, i) => {
       const on = p.id === m.activeProfileId || (!m.activeProfileId && i === 0);
-      return `<div class="prow2${on ? ' on' : ''}" data-profile="${esc(p.id)}" data-machines="${esc((p.machines || []).join('|'))}">
+      return `<button type="button" class="prow2${on ? ' on' : ''}" data-profile="${esc(p.id)}" data-machines="${esc((p.machines || []).join('|'))}">
         <div class="pthumb">${p.thumbnail ? `<img src="${esc(p.thumbnail)}" alt="" loading="lazy">` : ''}</div>
         <div class="pinfo">
           <div class="pname">${esc(p.name)}</div>
@@ -768,7 +770,7 @@ function profilesCard(m) {
                 .join('')}${p.machines.length > 8 ? `<span class="machine more">+${p.machines.length - 8}</span>` : ''}</div>`
             : ''}
         </div>
-      </div>`;
+      </button>`;
     })
     .join('');
 
