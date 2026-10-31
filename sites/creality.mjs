@@ -285,8 +285,11 @@ export function normalize(raw) {
   };
 }
 
-export async function search({ keyword, page = 1, pageSize = 20 } = {}) {
-  // 只实测过 sortType 10 = 下载量，别的排序不猜
+// 实测（2026-10-31，20 条一页看单调性）：7 下载 / 1 点赞 / 2 收藏 / 3 最新；
+// 不传（以及 0/4/8/10/11/12/13/14）都是站点默认综合序，5/6/9 会换序但语义未确认，别用。
+const SORT_TYPE = { downloads: 7, likes: 1, collects: 2, newest: 3 };
+
+export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const r = await fetch(`${SITE}/api/cxy/smart_search/v1/model`, {
     method: 'POST',
     headers: { ...APP_HEADERS, referer: `${SITE}/` },
@@ -294,7 +297,7 @@ export async function search({ keyword, page = 1, pageSize = 20 } = {}) {
       page,
       pageSize,
       keyword,
-      sortType: 10,
+      sortType: SORT_TYPE[sort],
       printers: [],
       promoType: 0,
       isVip: 0,

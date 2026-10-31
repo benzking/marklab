@@ -212,7 +212,7 @@ library/<platform>-<id>/
 | 值 | 含义 | 处理 |
 |---|---|---|
 | `login` | 站点要登录才给文件 | 登录后统一补抓 |
-| `captcha` | 站点要人机验证（MakerWorld 实测 418 + geetest；MakerOnline 实测 `POST /api/file/download` 回 `{"code":1003,"message":"showCaptcha"}`） | 在浏览器里打开该模型页过一次验证，再补抓 |
+| `captcha` | 站点要人机验证（目前只有 MakerWorld：418 + geetest） | 在浏览器里打开该模型页过一次验证，再补抓 |
 | `parse` | 有文件但解析没拿到链接 | 修解析器，然后重抓 |
 | `none` | 站点本来就不提供下载 | 不再重试 |
 | `skipped` | 这一轮压根没尝试下载（`--no-files`） | 不算问题 |
@@ -383,11 +383,15 @@ ADR-0003 的机制，按**接口**而不是按站点：
   探测抛错也归 `unknown`，不新增第四态。
 - 只从本机常驻 Chromium 进程内现取（`context.cookies()`），不落盘、不打印、不进日志。
 - 探测请求必须有超时（15 秒）；任一站点挂住不许把整个 `/api/console/login` 拖死。
-- MakerWorld 检测到 `logged-out` 时**不抓文件**，直接记 `noFiles: "login"`；
+- MakerWorld 的文件先走 CDN 裸链（3mf 在 CDN 上是公开文件，匿名可下）：未登录也能拿到这部分。
+  反推不出裸链的配置（没生成过 3D 预览）才回落 f3mf，那时未登录记 `noFiles: "login"`；
   用户登录后统一补抓（控制台的「待补抓」）。
-- MakerWorld 的 f3mf 与 MakerOnline 的 `POST /api/file/download` 在「已登录」时仍会撞人机验证
-  （实测 418 + geetest / `{"code":1003,"message":"showCaptcha"}`）：这是 `captcha`，
-  **不是** `login`。两种情况都只发一次请求就放弃，不逐个打印配置重试。
+- MakerWorld 的 f3mf 在「已登录」时仍会撞人机验证（实测 418 + geetest）：这是 `captcha`，
+  **不是** `login`，只发一次请求就放弃，不逐个打印配置重试；已拿到的 CDN 文件照常入库，
+  日志点名是哪几个配置缺。
+- MakerOnline 不再撞验证码：`POST /api/file/download` 带 `Platform: ios`（站点给 App 的通道）
+  直接回签名直链，3mf / STL / 文档同一接口（`file_type` 2 / 1 / 3）；头值必须精确是 `ios`，
+  `android` / `web` / 大写 `iOS` 都被拒（回 `{"code":1,"message":"The system is busy."}`）。
 - MakerOnline `.cn` 与 `.com` 的登录态互不相干，**cookie 按域取、不许合并进同一个请求头**。
   同一个 `platform` 下两个域各自探测、各自报状态。
 - **缓存与刷新**：登录态缓存 60 秒、cookie 缓存 300 秒——工作台每次刷新都打一遍五个探测
@@ -537,7 +541,7 @@ queued → fetching → parsing → downloading → done
 | `unknown-site` | 网址不在站点包白名单 | 换个网址 | 没有（终态） |
 | `parse` | 站点结构变了，解析点没拿到数据 | 等修解析器 | 没有（重试还是同样的页面） |
 | `login` | 站点要登录才给文件 | 登录后点补抓 | 登录后才有 |
-| `captcha` | 站点要人机验证（418 + geetest / `showCaptcha`） | 浏览器里过一次验证再补抓 | 过验证后才有 |
+| `captcha` | 站点要人机验证（MakerWorld：418 + geetest） | 浏览器里过一次验证再补抓 | 过验证后才有 |
 | `browser` | 连不上 CDP 9223 | 开 Chromium | 连上之后才有 |
 | `timeout` | 30 分钟没跑完 | 看是不是站点卡了 | 有一次 |
 | `network` | 连接被拒/重置/5xx | 等一会 | 有 |
@@ -564,8 +568,8 @@ queued → fetching → parsing → downloading → done
 11. 两个模型之间 → 间隔 ≥ 60 秒，**包括上一个任务没下到文件的**。
 12. 重启服务 → 暂停状态保持；`nextOkAt` 没走完不许开跑。
 13. 点「暂停抓取」→ `data/queue.json` 写 `paused:true`；重启服务 → 仍是暂停。
-14. MakerWorld 未登录抓一个模型 → 不下载文件，`noFiles: "login"`，任务 `done` 不是 `failed`；
-    撞人机验证时记 `captcha`。两种情况都只发一次 f3mf 请求。
+14. MakerWorld 未登录抓一个模型 → CDN 裸链能反推出来的文件照下；一个都反推不出来时
+    `noFiles: "login"`，任务 `done` 不是 `failed`。撞人机验证时记 `captcha`，f3mf 只发一次请求。
 15. 抓取子进程被 SIGTERM / 卡住 30 分钟 → 关掉自己开的标签页再退出，任务记「超时」。
 16. 同一网址连点两次「抓取」→ 队列里只有一条。
 17. `POST /api/grab` → 1 秒内返回 202 + taskId。

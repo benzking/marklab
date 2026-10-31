@@ -6,9 +6,9 @@
 // 取数方式：Nuxt 2，数据在页面 `window.__NUXT__` 的 IIFE 里。**绝不在服务端求值**——
 // vm 不是安全边界（实测能拿到宿主 process）。改成浏览器页内读出模型那一段，只把 JSON 传回来。
 //
-// 下载靠页面点按钮：截获它创建的链接。必须 try/finally 还原 monkeypatch，否则常驻页被永久改坏。
+// 下载走站点给 App 的那条通道（见 fileLinks）：不开浏览器，纯 node。
 import * as ch from '../channel.mjs';
-import { sanitize, fmtHours, safeDecode, str, num, iso } from '../lib.mjs';
+import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
 
 const HOSTS = ['makeronline.cn'];
 const SITE = 'https://www.makeronline.cn';
@@ -99,7 +99,6 @@ export async function meta(url) {
 
   return {
     platform: PLATFORM,
-  aliases: ['makeronline'], // 订阅/搜索沿用历史上的 `makeronline` 键，落到国内站
     site: 'cn',
     id: hit.id,
     sourceUrl: canonical,
@@ -173,70 +172,74 @@ export async function meta(url) {
   };
 }
 
-/** 下载靠点页面按钮：`POST /api/file/download` 拿到签名链接后它自己建 <a> 点一下。
- *
- * 站点加了人机验证（易盾）：接口回 `{"code":1003,"message":"showCaptcha"}`，点按钮不会报错、
- * 只是弹验证码，所以必须读接口返回体才知道为什么没链接——否则会被记成「解析没拿到链接」。
- */
-export async function fileLinks(model) {
-  const js = `(async () => {
-    const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-    // position:fixed 的元素 offsetParent 是 null，不能拿它判可见
-    const vis = (el) => { const r = el.getBoundingClientRect(); return r.width > 0 && r.height > 0; };
-    const got = [];
-    const xhrs = [];
-    const oc = HTMLAnchorElement.prototype.click;
-    HTMLAnchorElement.prototype.click = function () { if (this.href) got.push(this.href); };
-    const ow = window.open;
-    window.open = function (u) { if (u) got.push(String(u)); return null; };
-    // axios 走 XHR 不走 fetch，盯 fetch 是盯不到的
-    const OX = XMLHttpRequest.prototype.open;
-    const OS = XMLHttpRequest.prototype.send;
-    XMLHttpRequest.prototype.open = function (m, u) { this.__u = String(u); return OX.apply(this, arguments); };
-    XMLHttpRequest.prototype.send = function () {
-      this.addEventListener('loadend', () => {
-        if (/\\/api\\/file\\/download/.test(this.__u || '')) xhrs.push(String(this.responseText || '').slice(0, 300));
-      });
-      return OS.apply(this, arguments);
-    };
-    let out;
-    try {
-      const findBtn = () => [...document.querySelectorAll('.print-download-button button, button')].find((b) => /^(下载|Download)$/i.test((b.innerText || '').trim()) && vis(b));
-      let btn = findBtn();
-      for (let i = 0; i < 20 && !btn; i++) { await sleep(250); btn = findBtn(); }
-      if (!btn) return { error: '页面上找不到下载按钮' };
-      // 服务端渲染的按钮先出现、Vue 后挂事件：连点几次直到它真的有反应
-      for (let i = 0; i < 8 && !xhrs.length && !got.length; i++) { btn.click(); await sleep(1500); }
-      if (!xhrs.length && !got.length) return { error: '点了下载但站点没有任何反应（可能要登录，或改了下载流程）' };
-      if (xhrs.some((t) => /showCaptcha|captcha/i.test(t))) {
-        return { captcha: xhrs.find((t) => /showCaptcha|captcha/i.test(t)).slice(0, 120) };
-      }
-      const all = [...document.querySelectorAll('button')].find((b) => /下载全部|Download all/i.test(b.innerText || '') && vis(b));
-      if (all) { all.click(); await sleep(9000); }
-      const needLogin = [...document.querySelectorAll('.el-dialog, .el-drawer')]
-        .filter(vis).some((d) => /登录|Log in|Sign in/i.test(d.innerText || ''));
-      out = { urls: [...new Set(got)].filter((u) => /^https?:/.test(u)), needLogin, xhrs };
-    } finally {
-      // 常驻页是共用的，抛错也必须把 monkeypatch 还回去，否则后面所有点击都被劫持
-      HTMLAnchorElement.prototype.click = oc;
-      window.open = ow;
-      XMLHttpRequest.prototype.open = OX;
-      XMLHttpRequest.prototype.send = OS;
-    }
-    return out;
-  })()`;
-  const { value: res } = await ch.evalInPage(model.sourceUrl, js, { wait: 5000 });
-  if (res.error) throw new Error(res.error);
-  if (res.captcha) throw new Error(`下载要过人机验证（${res.captcha}）：在浏览器里打开这个模型点一次下载，再补抓`);
-  if (!res.urls.length) {
-    throw new Error(res.needLogin ? '下载需要登录：先在浏览器登录 makeronline' : '没截到下载链接（站点可能改了下载流程）');
-  }
-  return res.urls.map((u, i) => {
-    // 签名链接的 response-content-disposition 里带着原始文件名
-    const m = /filename=(?:UTF-8'')?([^&;]+)/i.exec(safeDecode(u));
-    const name = (m && safeDecode(m[1].replace(/\+/g, ' '))) || `${(model.files[0]?.name || 'model').replace(/\.\w+$/, '')}${i ? '-' + (i + 1) : ''}.3mf`;
-    return { name, url: u, size: model.files[0]?.size, kind: 'profile', origin: 'author' };
+// 下载走 App 通道：带 `Platform: ios` 时站点把请求当成 App 的，直接回私有桶签名 URL。
+// web 通道每次都回 1003 showCaptcha（易盾），靠点按钮也绕不过——按钮背后就是这个接口。
+// 值必须精确是 `ios`：android / web / `iOS` 大写都被拒（回 code 1 "The system is busy."）。
+const APP = { Platform: 'ios' };
+
+async function api(pathname, { method = 'GET', body } = {}) {
+  const cookie = await ch.cookieHeader('makeronline.cn');
+  if (cookie == null) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）再抓');
+  const token = /(?:^|;\s*)mo_access_token=([^;]+)/.exec(cookie)?.[1];
+  if (!token) throw new Error('下载需要登录：先在浏览器登录 makeronline');
+  const r = await fetch(`${SITE}/${pathname}`, {
+    method,
+    headers: { cookie, authorization: token, accept: 'application/json', 'content-type': 'application/json', ...APP },
+    body: body ? JSON.stringify(body) : undefined,
   });
+  const j = await r.json().catch(() => null);
+  if (!j) throw new Error(`MakerOnline ${pathname} 返回非 JSON（HTTP ${r.status}）：登录失效或被风控`);
+  return j;
+}
+
+/** 该下哪些文件（纯函数，好断言）：3mf 打印配置 + STL 模型件 + 文档，各走各的 file_type。 */
+export function downloadJobs(detail, id) {
+  return [
+    ...(detail?.print_profiles || []).flatMap((p) =>
+      (p.files || []).map((f) => ({
+        name: f.file_name || `${p.title || 'profile'}.3mf`,
+        kind: 'profile',
+        origin: p.is_author ? 'author' : 'other',
+        body: { key: f.key, file_type: 2, is_batch_down: 0, print_profile_id: p.id },
+      })),
+    ),
+    ...(detail?.files || []).map((f) => ({
+      name: f.file_name || `${id}.stl`,
+      kind: 'model',
+      origin: 'author',
+      body: { key: f.key, file_type: 1, is_batch_down: 0, mold_id: Number(id) },
+    })),
+    ...(detail?.docs || []).map((f) => ({
+      name: f.file_name || `${id}.pdf`,
+      kind: 'doc',
+      origin: 'author',
+      body: { key: f.key, file_type: 3, is_batch_down: 0, mold_id: Number(id), print_profile_id: 0 },
+    })),
+  ];
+}
+
+/** 一个文件一次 POST，回签名 URL（只签了 GET，HEAD 会 403）。批量接口要建打包任务，不走。 */
+export async function fileLinks(model) {
+  const detail = (await api(`api/mold/detail?id=${model.id}`)).data;
+  const jobs = downloadJobs(detail, model.id);
+  if (!jobs.length) throw new Error('站点没给文件直链（这类模型只能在站点里下）');
+  const out = [];
+  const bad = [];
+  const seen = new Set(); // 多个打印配置常指向同一个 3mf：按对象路径去重，别下三遍
+  for (const j of jobs) {
+    const r = await api('api/file/download', { method: 'POST', body: j.body });
+    if (r.code !== 0 || typeof r.data !== 'string') {
+      bad.push(`${j.name}：${r.message || `code ${r.code}`}`);
+      continue;
+    }
+    const objectPath = r.data.split('?')[0];
+    if (seen.has(objectPath)) continue;
+    seen.add(objectPath);
+    out.push({ name: j.name, url: r.data, kind: j.kind, origin: j.origin });
+  }
+  if (bad.length) console.warn(`  文件直链没拿到 ${bad.length} 个：${bad[0]}`);
+  if (!out.length) throw new Error(`站点没给文件直链（${bad[0]}）`);
+  return out;
 }
 
 export function normalize(raw) {
@@ -258,12 +261,16 @@ export function normalize(raw) {
   };
 }
 
-export async function search({ keyword, page = 1, pageSize = 20 } = {}) {
-  // 搜索接口没有排序参数，sort 只保留在返回里
+// 浏览器 UI 实测（2026-10-31）：相关性='' · 最多下载=download_num_desc · 最新上传=submit_at_desc · 最多点赞=like_num_desc。
+// 但一传 order 就丢关键词精度（「皮卡丘」+ 下载序只有 1/20 条标题命中，相关性 20/20），
+// 所以有关键字时只走相关性序，下载序交给调用方本地重排（subs.mjs 的 sortItems）。
+const ORDER = { downloads: 'download_num_desc', likes: 'like_num_desc', newest: 'submit_at_desc' };
+
+export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const r = await fetch(`${SITE}/api/search/model`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0 }),
+    body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0, order: keyword ? '' : ORDER[sort] || '' }),
   });
   if (!r.ok) throw new Error(`MakerOnline HTTP ${r.status}`);
   const j = await r.json();
@@ -335,6 +342,20 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
   console.assert(n.site === 'makeronline' && n.id === '1', '站点名与 id');
   console.assert(n.collects === null && n.comments === null, '无收藏/评论');
   console.assert(n.publishedAt === null && n.tags.length === 0, '缺字段默认');
+
+  // 下载清单的请求形状：file_type 1=STL、2=3mf、3=文档，各带各的 id
+  const jobs = downloadJobs(
+    {
+      print_profiles: [{ id: 9, is_author: 1, files: [{ key: 'k2', file_name: 'a.3mf' }] }],
+      files: [{ key: 'k1', file_name: 'b.stl' }],
+      docs: [{ key: 'k3', file_name: 'c.pdf' }],
+    },
+    '42',
+  );
+  console.assert(jobs.length === 3, '三类文件都进清单');
+  console.assert(jobs[0].body.file_type === 2 && jobs[0].body.print_profile_id === 9 && jobs[0].origin === 'author', '3mf 用 print_profile_id');
+  console.assert(jobs[1].body.file_type === 1 && jobs[1].body.mold_id === 42, 'STL 用 mold_id');
+  console.assert(jobs[2].body.file_type === 3 && jobs[2].kind === 'doc', '文档走 file_type 3');
 
   console.log('makeronline.cn pack demo ok');
 }

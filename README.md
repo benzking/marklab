@@ -75,7 +75,7 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 | --- | --- | --- |
 | Snapmaker Space | 页面 SSR（**必须带 `-model` 这种 slug**）里有完整打印配置；基础信息走 `api-models.snapmaker.cn/api/model/detail/<id>` | 私链 CDN，HTTP 直下 |
 | 创想云 | 页面 SSR 的 `__NUXT_DATA__`（注意 SSR 的 `modelList` **只有第一页 5 个 STL**，全量要再打 `/api/cxy/v3/model/fileListPage?pageSize=200`，一个模型常拆出几十个件）：`model-info_*` 是详情，**`3mf-list_*` 是打印配置**（3mf 版页面才有：机型、层高/墙/填充、盘数、耗时、耗材重量与逐色耗材 `colorFilament`、兼容机型表），`3mf-all-printers_*` 是机型表 | STL/文档走 `memberDownload` 换签名 URL，打印配置的 3mf 本体走 `3mfDownload`（body 只有 `{id: profileId}`，只认 `__cxy_token_`/`__cxy_uid_` 请求头，匿名一律 `code 4 Invalid Token`；回 OSS 签名直链，24 小时、匿名可下）——两者都要登录态，都不用开浏览器点按钮 |
-| MakerWorld | `/api/v1/design-service/design/<id>`（整站挡非浏览器 UA，必须在页面里 fetch） | `/api/v1/design-service/instance/<id>/f3mf` 换签名 URL（5 分钟有效） |
+| MakerWorld | `/api/v1/design-service/design/<id>`（整站挡非浏览器 UA，必须在页面里 fetch） | **先走 CDN 裸链**：`instances[].extention.extensionModelFileList` 的预览链 `.../instance/low_compression_glb/<uuid>.zip?at=…` 去掉 query、去掉那层目录、换 `<uuid>.3mf` 就是同一份 3mf（匿名 200、缓存一年、支持 Range），大小对得上 `modelInfo.f3mf.size` 才算命中；反推不出来（没生成 3D 预览的配置）才回落 `/api/v1/design-service/instance/<id>/f3mf`（签名 URL，5 分钟有效，要登录 + 过 geetest） |
 | MakerOnline（`.com` 国际站 / `.cn` 国内站，结构一样） | 页面里的 `window.__NUXT__` 是 IIFE 打包的数据，`vm` 里求值后取 `modelDetailData`（打印配置 / 逐盘耗时克重 / 逐色耗材 / 说明 PDF；国内站还带原始文件清单） | `POST /api/file/download`，要 access token；页面里点「下载 → 下载全部」截签名链接（链接的 `response-content-disposition` 里有原始文件名） |
 
 浏览器（`channel.mjs`）：`playwright-core` 用 CDP 连上你正在用的那个 Chromium
@@ -174,19 +174,22 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 ## 已知边界
 
 - MakerOnline 的国内站与国际站是**两套登录态**：`.cn` 登录了不代表 `.com` 登录了，工具会按各自域名打开页面。
-- 创想云 / MakerWorld / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。
+- 创想云 / MakerWorld / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。例外：MakerWorld 走 CDN 裸链的那部分 3mf 匿名就能下，只要求浏览器连着（design JSON 还得在页内取）。
 - **MakerWorld 没有「按机型」的单独 3mf**：`?machine=N2S / O1C2` 返回的还是同一个文件（同名同大小同 URL），
   机型只是一张兼容列表。A1 / H2C 在详情页当页签展示，不再尝试下三份。
 - MakerWorld 原始上传件（`designExtension.model_files`）的下载接口还没找到，名字与大小记在 `model.json` 里。
-- **MakerWorld 与 MakerOnline 的下载都撞人机验证**：MakerWorld 的 `f3mf` 即使已登录也回 `418` +
-  geetest「我们需要确认您不是机器人」；MakerOnline 点「下载」后 `POST /api/file/download` 回
-  `{"code":1003,"message":"showCaptcha"}`（网易易盾），点了不报错、只弹验证码。
-  这类模型记 `noFiles: "captcha"`，控制台「待补抓」单独一行；要下就得在浏览器里打开该模型页过一次验证。
-  这是库里 282 个 MakerWorld 模型只有 1 个有文件的主要原因。
+- **MakerWorld 的下载撞人机验证**：`f3mf` 即使已登录也回 `418` + geetest「我们需要确认您不是机器人」，
+  而且连续下几个就触发、几十分钟不恢复。所以文件优先走上面的 CDN 裸链（不要登录、不过验证）；
+  只有「没生成过 3D 预览」的配置反推不出 uuid，才落到 f3mf，撞验证时记 `noFiles: "captcha"`，
+  控制台「待补抓」单独一行，并在日志里点名是哪几个配置。要下就得在浏览器里打开该模型页手点一次验证。
+- **MakerOnline 的下载已绕开验证码**：web 通道点「下载」回 `{"code":1003,"message":"showCaptcha"}`（网易易盾），
+  但同一个 `POST /api/file/download` 带上 `Platform: ios`（站点给 App 的通道）就直接回签名直链——
+  3mf / STL / 文档都通（`file_type` 2 / 1 / 3），纯 node、不开浏览器、不用点按钮。
 - 创想云下「模型文件」列表（STL/CAD）+ 每份打印配置的 3mf 本体（`3mfDownload`，登录态换 24 小时签名直链）；配套文档已抓，下载要登录态。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。
 - MakerWorld 天然带登录态（只能走真浏览器），「匿名优先」对它不适用；其余三站列表/详情一律匿名。
+- 各站搜索排序参数（哪个值是真正的下载量 / 点赞 / 最新）见 [`docs/搜索排序.md`](docs/搜索排序.md)：创想云是 `sortType` 数字、MakerWorld 是 `orderBy` 字符串，无效值一律**静默回落默认**，不报错。
 - 订阅的「按发布时间排序」对 MakerOnline 无效：它的搜索响应里没有发布时间，这些条目排在最后。
 - 作者订阅里 MakerWorld 的主页列表只能走真浏览器（`@handle/upload?page=N` 的 `__NEXT_DATA__`），
   浏览器没连上时这一站这轮直接空；其余三站是匿名 HTTP。

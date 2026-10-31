@@ -4,8 +4,8 @@
 // 两个特殊处：
 //   1. 唯一会出现「他人件」的站——别人也能给同一个模型加打印配置，`instanceCreator.uid`
 //      与 `designCreator.uid` 不同时那份 3mf 不算作者件（判重时不比，见 spec §5）。
-//   2. 唯一「没登录就一个文件都拿不到」的站——f3mf 直接 403「请登录后下载模型」，
-//      所以未登录时立刻放弃，等登录后统一补抓，不逐个配置重试。
+//   2. f3mf 要登录 + 过人机验证（geetest 点选图，Playwright 过不了），连续下几个就 418，
+//      且不会自己恢复。所以 fileLinks 先走 CDN 裸链（见下），f3mf 只做兜底。
 import * as ch from '../channel.mjs';
 import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
 
@@ -142,38 +142,89 @@ export async function meta(url) {
   };
 }
 
-/** 每个 instance 一份 3mf（5 分钟签名链接）。别人加的配置标 other。 */
+/** 预览文件链 → 同一份 3mf 的 CDN 裸链：去掉签名 query，去掉压缩预览那一层目录，文件名换成 `<uuid>.3mf`。
+ *  两种压缩预览共用同一个 uuid，所以拿哪个都行。 */
+export function threeMfFrom(preview) {
+  const p = String(preview || '').split('?')[0];
+  const uuid = p.split('/').pop().replace(/\.zip$/i, '');
+  return p.replace(/[^/]+\/[^/]+$/, `${uuid}.3mf`);
+}
+
+/** 每个 instance 一份 3mf。别人加的配置标 other。
+ *
+ * 两条路，先甜后苦：
+ *   CDN 裸链——3mf 在 CDN 上是公开文件（匿名 200、缓存一年、支持 Range），路径能从
+ *   `extention.extensionModelFileList` 的预览文件反推：把 `.../instance/low_compression_glb/<uuid>.zip?at=…`
+ *   的 query 去掉、文件名换成 `<uuid>.3mf` 就是同一份 3mf。对得上 `modelInfo.f3mf.size` 才算命中。
+ *   f3mf——没生成过 3D 预览的配置反推不出来，只能走这条，要登录 + 过人机验证。 */
 export async function fileLinks(model) {
-  const mine = (model.fileIds || []).map((id, i) => {
+  const info = (model.fileIds || []).map((id, i) => {
     const c = model.profiles?.[i]?.creatorUid;
-    return [id, !c || !model.authorUid || String(c) === String(model.authorUid)];
+    const machine = model.profiles?.[i]?.machine || '';
+    return { id, machine, mine: !c || !model.authorUid || String(c) === String(model.authorUid) };
   });
+
   const js = `(async () => {
-    const out = [];
-    const errs = [];
-    for (const [id, mine] of ${JSON.stringify(mine)}) {
-      const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf', { headers: { accept: 'application/json' } });
-      if (!r.ok) {
-        let t = '';
-        try { t = (await r.json()).error || ''; } catch {}
-        errs.push(t || 'HTTP ' + r.status);
-        // 未登录（403）与人机验证（418 + geetest）都是整站性的：别再一个个配置试下去
-        if (r.status === 403 || r.status === 418 || /登录|forbidden|unauthor|机器人|captcha/i.test(t)) break;
-        continue;
-      }
-      const j = await r.json();
-      if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine });
+    const j = await (await fetch('/api/v1/design-service/design/${model.id}', { headers: { accept: 'application/json' } })).json();
+    const out = {};
+    for (const i of j.instances || []) {
+      const ext = i.extention || {};
+      const f = (ext.extensionModelFileList || []).find((x) => /compression_glb$/.test(x.compressType));
+      const size = (ext.modelInfo && ext.modelInfo.f3mf && ext.modelInfo.f3mf.size) || 0;
+      if (!f || !size) continue;
+      out[i.id] = { url: (${threeMfFrom.toString()})(f.modelFile), size };
     }
-    return { out, errs };
+    return out;
   })()`;
-  const { value: res } = await ch.evalInPage(model.sourceUrl, js, { wait: 6000 });
-  if (!res.out.length && res.errs.length) {
-    const first = res.errs[0];
-    if (/机器人|captcha|验证/i.test(first)) throw new Error(`MakerWorld 要过人机验证：${first}`);
-    if (/登录|403|forbidden|unauthor/i.test(first)) throw new Error(`MakerWorld 没登录，拿不到文件：${first}`);
-    throw new Error(first);
+  const { value: cdn } = await ch.evalInPage(model.sourceUrl, js, { wait: 6000 });
+
+  const out = [];
+  const rest = [];
+  for (const it of info) {
+    const c = cdn && cdn[it.id];
+    // 裸链对不对只认大小：content-length 与 design JSON 给的 f3mf.size 相等才算命中
+    const ok =
+      c &&
+      (await fetch(c.url, { method: 'HEAD' })
+        .then((r) => r.ok && Number(r.headers.get('content-length')) === c.size)
+        .catch(() => false));
+    if (ok) out.push({ name: `${model.title || 'model'}${it.machine ? '-' + it.machine : ''}.3mf`, url: c.url, size: c.size, mine: it.mine });
+    else rest.push(it);
   }
-  return res.out.map((r) => ({
+
+  if (rest.length) {
+    const js2 = `(async () => {
+      const out = [];
+      const errs = [];
+      for (const [id, mine] of ${JSON.stringify(rest.map((r) => [r.id, r.mine]))}) {
+        const r = await fetch('/api/v1/design-service/instance/' + id + '/f3mf', { headers: { accept: 'application/json' } });
+        if (!r.ok) {
+          let t = '';
+          try { t = (await r.json()).error || ''; } catch {}
+          errs.push(t || 'HTTP ' + r.status);
+          // 未登录（403）与人机验证（418 + geetest）都是整站性的：别再一个个配置试下去
+          if (r.status === 403 || r.status === 418 || /登录|forbidden|unauthor|机器人|captcha/i.test(t)) break;
+          continue;
+        }
+        const j = await r.json();
+        if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine });
+      }
+      return { out, errs };
+    })()`;
+    const { value: res } = await ch.evalInPage(model.sourceUrl, js2, { wait: 6000 });
+    if (!res.out.length && res.errs.length) {
+      const first = res.errs[0];
+      const ids = rest.map((r) => r.id).join(', ');
+      // 已经拿到一部分就整批不失败，但把落下的配置点名——它们只能靠手点验证后重抓
+      if (out.length) console.warn(`  MakerWorld 少 ${rest.length} 个配置（${ids}）：${first}——它们没有 CDN 预览路径，要在浏览器里手点一次验证`);
+      else if (/机器人|captcha|验证/i.test(first)) throw new Error(`MakerWorld 要过人机验证：${first}（配置 ${ids} 没有 CDN 预览路径，只能在浏览器里手点一次验证）`);
+      else if (/登录|403|forbidden|unauthor/i.test(first)) throw new Error(`MakerWorld 没登录，拿不到文件：${first}`);
+      else throw new Error(first);
+    }
+    out.push(...res.out);
+  }
+  if (!out.length) throw new Error('MakerWorld 这个模型没有可下载的 3mf');
+  return out.map((r) => ({
     name: r.name || 'model',
     url: r.url,
     size: r.size,
@@ -216,13 +267,34 @@ const readNextData = () => {
   return { total: pp?.total, designs: pp?.designs };
 };
 
+// 搜索翻页只能走站点自己的接口：SSR 的 __NEXT_DATA__ 只装第 1 页（URL 里的 page 它不认，
+// 1–5 页回同一批 20 条），接口的 offset 才是真翻页（offset=0 与 SSR 第 1 页逐条相同，2026-10-31 实测）。
+// 跑在页内：同源带登录态，匿名也能取。
+async function readSearchHits({ keyword, orderBy, offset }) {
+  const q = new URLSearchParams({
+    orderBy,
+    designType: '0',
+    isFromSearchList: 'false',
+    keyword,
+    limit: '20',
+    offset: String(offset),
+    ref_: '0031_07q_yz',
+  });
+  const r = await fetch(`/api/v1/search-service/select/design2?${q}`, { headers: { accept: 'application/json' } });
+  if (!r.ok) return { status: r.status };
+  const j = await r.json();
+  return { total: j?.total, hits: j?.hits };
+}
+
 export async function search({ keyword, page = 1, sort } = {}) {
   const orderBy = ORDER[sort] || 'score';
-  // pageSize 不可调，站点固定一页 20 条
+  // 一页固定 20 条，翻页靠 offset
   const url = `${SITE}/zh/search/models?keyword=${encodeURIComponent(keyword)}&orderBy=${orderBy}&page=${page}`;
-  const data = await ch.inPage('makerworld', url, readNextData, undefined, { wait: 2000 });
-  if (!data || !Array.isArray(data.designs)) throw new Error('MakerWorld 页面没拿到 __NEXT_DATA__.designs（浏览器没连上或站点改版）');
-  return { total: num(data.total), items: data.designs.map(normalize) };
+  const data = await ch.inPage('makerworld', url, readSearchHits, { keyword, orderBy, offset: (page - 1) * 20 }, { wait: 2000 });
+  if (!data || !Array.isArray(data.hits)) {
+    throw new Error(`MakerWorld 搜索接口没回 hits（HTTP ${data?.status ?? '没连上浏览器'}；站点改版或浏览器没开）`);
+  }
+  return { total: num(data.total), items: data.hits.map(normalize) };
 }
 
 export async function userModels({ uid, page = 1 } = {}) {
@@ -298,6 +370,14 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   console.assert(n.url === 'https://makerworld.com.cn/zh/models/7', '详情页 URL');
   console.assert(n.publishedAt === '2024-05-23T09:28:27.000Z' && n.tags.length === 1, '时间/标签');
   console.assert(n.author === 'B' && n.collects === 0, '作者/缺字段默认');
+
+  const preview =
+    'https://makerworld.bblmw.cn/makerworld/model/CN619f495182e64b/96324739/instance/low_compression_glb/4c981a01-d5bb-469f-b5e0-96ab61a609f4.zip?at=1793378816&exp=1793382416&key=x';
+  console.assert(
+    threeMfFrom(preview) ===
+      'https://makerworld.bblmw.cn/makerworld/model/CN619f495182e64b/96324739/instance/4c981a01-d5bb-469f-b5e0-96ab61a609f4.3mf',
+    '预览链反推 3mf 裸链（去签名 query、换扩展名）',
+  );
 
   console.log('makerworld pack demo ok');
 }

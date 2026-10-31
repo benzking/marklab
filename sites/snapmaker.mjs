@@ -13,7 +13,9 @@ const HOSTS = ['space.snapmaker.cn'];
 const SITE = 'https://space.snapmaker.cn';
 const API = 'https://api-models.snapmaker.cn';
 const CDN = 'https://cdn-model-private.snapmaker.cn';
-const SORTS = new Set(['downloads', 'likes', 'collects']);
+// 浏览器 UI 实测（2026-10-31）：热门=不传 · 最新=latest · 下载量=downloads · 点赞量=like · 收藏量=collects。
+// 点赞是单数 like；写 likes 会被静默忽略、回落默认序。
+const SORT = { downloads: 'downloads', likes: 'like', collects: 'collects', newest: 'latest' };
 
 /** 网址 → { name, id, url }；认不出返回 null（不猜）。url 是重组后的干净地址。 */
 export function match(raw) {
@@ -273,7 +275,7 @@ export async function search({ keyword, page = 1, pageSize = 20, sort = 'downloa
     keyword,
     page: String(page),
     pageSize: String(pageSize),
-    sort: SORTS.has(sort) ? sort : 'downloads',
+    sort: SORT[sort] || 'downloads',
   });
   const r = await fetch(`${API}/api/model/list?${q}`, { headers: LIST_HEADERS });
   if (!r.ok) throw new Error(`Snapmaker HTTP ${r.status}`);

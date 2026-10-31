@@ -23,7 +23,7 @@ const subInput = (g) => ({
   minDownloads: 0,
   pickedOnly: false,
   excludeInLibrary: true,
-  sort: 'downloads', // 创想云/ MakerOnline 只认下载量排序，newest 会被静默降级
+  sort: 'downloads', // MakerOnline 没有排序参数、Snapmaker 默认是最新，要稳定就固定用下载量
   pageLimit: 1, // 每个词只取首页 20 条：先保下载量高的那批
   roundLimit: Number(g.roundLimit) || 20,
   intervalHours: INTERVAL[Number(g.risk)] || 12,
