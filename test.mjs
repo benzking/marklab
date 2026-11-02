@@ -962,6 +962,8 @@ test('五个站点包的自检都要能跑过（match/normalize 回归）', asyn
       cp.on('close', (code) => res({ code, err }));
     });
     assert.equal(r.code, 0, `sites/${f}.mjs 自检失败：${r.err}`);
+    // console.assert 只往 stderr 打字，退出码照样是 0：不看 stderr 这条测试等于没跑
+    assert.ok(!/Assertion failed/.test(r.err), `sites/${f}.mjs 有断言没过：${r.err.slice(0, 300)}`);
   }
 });
 
