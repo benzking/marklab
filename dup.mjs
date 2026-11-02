@@ -4,6 +4,7 @@
 // 只有字节完全一样才会撞上同一个 hash，所以 3mf 只可能和 3mf 撞、stl 只可能和 stl 撞。
 // 命中不入库，只记 data/duplicates.json；library/ 一个字节都不改（AGENTS.md）。
 import { readdir, readFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { writeJson, ROOT, LIB } from './lib.mjs';
 
@@ -68,6 +69,28 @@ export async function index(force = false, libDir = LIB) {
   for (const arr of byMeta.values()) arr.sort((a, b) => a.at - b.at);
   idx = { byMeta, hashes, keys };
   return idx;
+}
+
+/**
+ * 订阅查库用：只读候选自己那个目录，不扫全库、不建索引。
+ * 形状与 index().keys 一致（有 has），一轮里同一个 key 只读一次盘。
+ * 订阅一轮几十上百条候选，每条一次 readFileSync 是毫秒级；扫全库才是白花时间。
+ */
+export function libChecker(libDir = LIB) {
+  const memo = new Map();
+  return {
+    has(key) {
+      if (!memo.has(key)) {
+        let ok = false;
+        try {
+          const m = JSON.parse(readFileSync(path.join(libDir, String(key).replace(':', '-'), 'model.json'), 'utf8'));
+          ok = (m.savedFiles || []).length > 0;
+        } catch {}
+        memo.set(key, ok);
+      }
+      return memo.get(key);
+    },
+  };
 }
 
 /**

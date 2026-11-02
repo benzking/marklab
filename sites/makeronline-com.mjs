@@ -15,7 +15,7 @@ const SITE = 'https://www.makeronline.com';
 // 排序值同 makeronline.cn（同一个后端），`order` 参数带关键字也认——实测过（docs/搜索排序.md）
 const ORDER = { downloads: 'download_num_desc', likes: 'like_num_desc', newest: 'submit_at_desc' };
 // 数据命名空间：**必须分域**。.cn/.com 是两套独立 id 空间（同号不同模型），共用一个键会让两个站
-// 的模型落进同一个库目录、撞同一个判重键。.cn 包沿用历史键 `makeronline`，库里 5 条不用迁。
+// 的模型落进同一个库目录、撞同一个判重键。两边的键都是域名（`makeronline.cn` / `makeronline.com`）。
 const PLATFORM = 'makeronline.com';
 
 export function match(raw) {

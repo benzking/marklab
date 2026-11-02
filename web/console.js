@@ -677,17 +677,8 @@ async function delSub(id, btn) {
 const RULE_LIMIT = 20; // 站点搜索一页 20 条（site-pack.md），新规则默认取一页
 
 const sitesList = () => (sitesData && Array.isArray(sitesData.sites) ? sitesData.sites : []);
-// 后端只存 {site,id,name}，编辑时按站点把主页链接拼回来
-const userUrl = (u) =>
-  u.url ||
-  {
-    creality: `https://www.crealitycloud.cn/user/${u.id}/profile`,
-    makerworld: `https://makerworld.com.cn/zh/@${u.id}/upload`,
-    snapmaker: `https://space.snapmaker.cn/zh/creator/${u.id}`,
-    'makeronline.cn': `https://www.makeronline.cn/user/personalInfo/${u.id}.html`,
-    'makeronline.com': `https://www.makeronline.com/user/personalInfo/${u.id}.html`,
-  }[u.site] ||
-  '';
+// 后端存的就是原样链接（subs.mjs cleanUsers），这里不再自己拼站点模板
+const userUrl = (u) => u.url || '';
 const abilitiesOf = (site) => sitesList().find((s) => s.site === site)?.abilities || {};
 
 /** 一条候选规则：站点 + 排序 + 前 N 条 + 删。排序项只列该站 abilities.sorts 里有的。 */

@@ -212,7 +212,7 @@ searchOptions: {
 | `meta` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ |
 | `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ |
-| `searchOptions.sorts` | downloads, likes, collects, newest | downloads, likes, newest, hot, score | downloads, likes, collects, newest | downloads, likes, newest | downloads, likes, newest |
+| `searchOptions.sorts` | downloads, likes, collects, newest | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） |
 | `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ |
 | 页大小固定 | 否 | **20** | 否 | 否 | 否 |
 | `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ |

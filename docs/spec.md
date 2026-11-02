@@ -394,7 +394,8 @@ library/<platform>-<id>/
   `{key, sources, title, author, tags, decision, firstSeen, lastSeen}`。`decision` ∈
   `queued | no-match | threshold | in-library | in-queue`，这就是「为什么没进队列」的答案。
   30 天没再出现就清。
-- **这个文件是台账，不是缓存**：每轮都重新判定，不沿用上次结论。判定是本地读盘（毫秒级），
+- **这个文件是台账，不是缓存**：每轮搜到的候选都重新判定，不沿用上次结论（本轮没搜到的老条目
+  保持上次的 `decision`，等它再被搜到才重判）。判定是本地读盘（毫秒级），
   省它没意义；沿用反而有害——你手动删了库里的模型，它还会被记成 `in-library` 永远不下。
 - **前 N 条是硬上限**：`limit = 150` 就取 150 条，翻到第 8 页（160 条）多出来的 10 条要丢掉，
   不许凑成整页。
@@ -409,8 +410,9 @@ library/<platform>-<id>/
   `tags[]`（前 20 条 tag 精确含关键词 20/20）；Snapmaker 结果没有 `tags`，只有 `translatedTags`
   （中文译名，如「可爱/摆件/关节可动的」）——**算**，当加分项用（命中就放行，译名对不上也不算失败，
   反正不额外花请求）；创想云结果不带标签（只带 `categoryName`）；MakerOnline 结果项里没有 tags 字段。
-  → **创想云与 MakerOnline 的 tag 勾选框灰掉**，注明「该站搜索结果不带标签」。勾了 `tag` 的订阅
-  如果含这两站的规则，那条规则只用 `name` 判，不算失败。Snapmaker 的 `translatedTags` 要由
+  → **创想云与 MakerOnline 不支持 tag 匹配**。`matchModes` 是订阅级开关，没法只灰掉某一站的
+  勾选框，所以这两站的规则在表单里**行尾标注**「该站搜索结果不带标签」；勾了 `tag` 的订阅如果含
+  这两站的规则，那条规则只用 `name` 判，不算失败。Snapmaker 的 `translatedTags` 要由
   站点包归到 `tags` 字段（`sites/snapmaker.mjs` 现在读 `raw.tags` 恒空）——这是站点包契约的事，
   不在订阅里打补丁。反证：创想云按下载量排序
   第 1 页 20 条里名字命中 8 条，抽查未命中的 8 条打开详情页，tag 含关键词的 **0 条**——花钱开详情页
@@ -444,6 +446,10 @@ MakerWorld `createTime` 降序、Snapmaker `published_at` 降序、MakerOnline `
   （`authorCursor: { "site:id": { page, done } }`），被打断就从那一页接着翻；翻到底才置
   `done: true`，从此才启用「连续 20 条就停」。否则第二轮从第 1 页重扫、立刻撞上 20 条旧模型
   就停，第 30 页以后的永远下不到。
+
+作者订阅**不经过候选调度器**：它是「他发的我都要」，没有候选、没有匹配、没有门槛，
+搜到一条过完库/队列两道闸就直接进抓取队列，所以也不写 `candidates.json`
+（控制台里作者订阅没有候选清单，这是对的）。
 
 关键字订阅**不做增量**：搜索结果按相关性/下载量排，与时间无关，做不到「撞到旧的停」。
 

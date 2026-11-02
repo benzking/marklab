@@ -101,6 +101,11 @@ export function sortsOf(site) {
   return sites.byName(site)?.searchOptions?.sorts || [];
 }
 
+/** 这个站的搜索结果带不带标签（tag 匹配能不能用）。 */
+export function tagsOf(site) {
+  return sites.byName(site)?.searchOptions?.tags === true;
+}
+
 /** 订阅规则里的排序：不在该站能力里就回落该站默认序。 */
 export function sortOfSite(site, sort) {
   return sortOf(sites.byName(site), sort);

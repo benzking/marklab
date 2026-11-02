@@ -72,22 +72,29 @@ export function decide(cand, sub, ctx = {}) {
   if (sub.kind === 'author') return 'queued'; // 作者订阅：他发的我都要，没有门槛也没有匹配
   if (!passes(cand, sub)) return 'threshold';
   const modes = (sub.matchModes || ['name']).filter((m) => MATCH_MODES.includes(m));
+  const wantName = modes.includes('name');
+  const wantTag = modes.includes('tag');
   const hit = sources.some((s) => {
     const kw = dup.normText(s.kw);
     if (!kw) return false;
-    if (modes.includes('name') && dup.normText(cand.title).includes(kw)) return true;
+    const name = () => dup.normText(cand.title).includes(kw);
     // tag 只用搜索结果自带的标签，不打开详情页（spec §6.2 实测：开详情页换 0 命中）
-    if (modes.includes('tag') && (cand.tags || []).some((t) => dup.normText(t).includes(kw))) return true;
-    return false;
+    const tag = () => (cand.tags || []).some((t) => dup.normText(t).includes(kw));
+    // 该站搜索结果不带标签（创想云 / MakerOnline）：tag 那道退回用名字判，不算失败
+    if (wantTag && !search.tagsOf(s.site)) return name();
+    return (wantName && name()) || (wantTag && tag());
   });
   return hit ? 'queued' : 'no-match';
 }
 
-/** 纯函数：把搜索来的原始结果合成候选——先按 site:id，再按「标题+作者」跨站合并。 */
+/** 纯函数：把搜索来的原始结果合成候选——先按 site:id，再按「标题+作者」跨站合并。
+ *  先排序再合并：四站并行，到达顺序不定，不排序的话「合并键取先到那个」每轮都会变，
+ *  台账里同一个模型就会长出两行、firstSeen 反复重置。 */
 export function mergeSources(items) {
   const out = new Map(); // 合并键 -> 候选
   const byMeta = new Map(); // metaKey -> 合并键
-  for (const it of items) {
+  const sorted = [...items].sort((a, b) => (candidateKey(a.site, a.id) < candidateKey(b.site, b.id) ? -1 : 1));
+  for (const it of sorted) {
     const key = candidateKey(it.site, it.id);
     const mk = dup.metaKey(it.title, it.author);
     const merged = (mk && byMeta.get(mk)) || key;
@@ -97,7 +104,7 @@ export function mergeSources(items) {
       out.set(merged, cand);
       if (mk) byMeta.set(mk, merged);
     }
-    cand.sources.push({ site: it.site, id: it.id, url: it.url, rank: it.rank, kw: it.kw });
+    cand.sources.push({ site: it.site, id: it.id, url: it.url, rank: it.rank, kw: it.kw, rule: it.rule });
     for (const t of it.tags || []) if (!cand.tags.includes(t)) cand.tags.push(t);
     // 数值取「主来源」那份，入队也用它，展示和判定才一致
     const primary = pickPrimary(cand.sources);
@@ -112,6 +119,21 @@ export function mergeSources(items) {
   return [...out.values()];
 }
 
+/** 老订阅（只有 sites[]，没有 rules[]）→ 按站逐站生成一条规则。spec §6.2「迁移」。 */
+export function migrateSub(sub) {
+  if (sub.kind !== 'author' && !Array.isArray(sub.rules) && Array.isArray(sub.sites)) {
+    const limit = Math.max(1, Number(sub.pageLimit) || 1) * PAGE;
+    sub.rules = sub.sites.map((site) => ({ site, sort: search.sortOfSite(site, sub.sort) || null, limit }));
+    sub.matchModes = ['name'];
+    sub.kind = 'keyword';
+  }
+  delete sub.sites;
+  delete sub.sort;
+  delete sub.pageLimit;
+  delete sub.roundLimit;
+  return sub;
+}
+
 let cache = null;
 
 export async function load(force = false) {
@@ -121,7 +143,7 @@ export async function load(force = false) {
   } catch {
     cache = { subs: [] };
   }
-  cache.subs ||= [];
+  cache.subs = (cache.subs || []).map(migrateSub);
   return cache;
 }
 
@@ -147,11 +169,11 @@ function cleanUsers(input) {
     if (typeof u === 'string') {
       const p = search.parseUserUrl(u);
       if (!p) throw new Error(`认不出这个用户主页：${u}`);
-      return { site: p.site, id: p.id, name: '' };
+      return { site: p.site, id: p.id, name: '', url: u };
     }
     // 用 allSites() 而不是 SITES：SITES 在 import 时就冻住了，运行期注册的站点（测试假站点）认不出来
     if (!u || !search.allSites().includes(u.site) || !String(u.id || '').trim()) throw new Error('用户主页格式不对');
-    return { site: u.site, id: String(u.id).trim(), name: String(u.name || '').trim() };
+    return { site: u.site, id: String(u.id).trim(), name: String(u.name || '').trim(), url: String(u.url || '').trim() };
   });
 }
 
@@ -302,9 +324,6 @@ export async function candidates(id) {
   }
 }
 
-// 一次「一个词 × 一个站」大约要 15 秒（最小间隔）+ 开销；预算按这个估，宁少不超
-const JOB_MS = 25_000;
-
 /** 本轮能跑多久：间隔的六成留给搜索，剩下四成留给下载（下载自己还有 60–120 秒闸门）。 */
 export function budgetMs(sub) {
   const hours = Number(sub.intervalHours) || 8;
@@ -328,8 +347,9 @@ async function runOnce(id, clock) {
   const sub = await get(id);
   if (!sub) throw new Error('没有这个订阅');
   const startedAt = new Date().toISOString();
-  // 库里有没有：keys 只含真下到文件的（没文件的空壳不算入库，它得能再抓一次）
-  const libKeys = (await dup.index(true)).keys;
+  // 库里有没有：候选来了才读它自己那个目录，不扫全库（spec §6.2「不建索引、不批量重建」）。
+  // 没下到文件的空壳不算入库，它得能再抓一次。
+  const libKeys = dup.libChecker();
   // 已在排队/在跑的别再排一遍。按 url 比是够的：url 由站点包按 id 重组，真重复了入库那步还有兜底。
   const busy = new Set(
     tasks
@@ -417,25 +437,23 @@ async function runOnce(id, clock) {
   const keep = [];
   const queued = [];
 
-  if (!stopped) {
-    for (const cand of cands) {
-      const old = prevMap.get(cand.key);
-      const decision = decide(cand, sub, { libKeys, busy }); // 每轮重判：判定是本地读盘，省不出什么，却会挡住「删了想重下」
-      const row = {
-        key: cand.key,
-        sources: cand.sources,
-        title: cand.title,
-        author: cand.author,
-        tags: cand.tags || [],
-        decision,
-        firstSeen: old?.firstSeen || new Date().toISOString(),
-        lastSeen: new Date().toISOString(),
-      };
-      keep.push(row);
-      if (decision !== 'queued') continue;
-      const primary = pickPrimary(cand.sources);
-      queued.push({ ...cand, url: primary.url, sources: cand.sources, matchedAt: new Date().toISOString() });
-    }
+  for (const cand of cands) {
+    const old = prevMap.get(cand.key);
+    const decision = decide(cand, sub, { libKeys, busy }); // 每轮重判：判定是本地读盘，省不出什么，却会挡住「删了想重下」
+    const row = {
+      key: cand.key,
+      sources: cand.sources,
+      title: cand.title,
+      author: cand.author,
+      tags: cand.tags || [],
+      decision,
+      firstSeen: old?.firstSeen || new Date().toISOString(),
+      lastSeen: new Date().toISOString(),
+    };
+    keep.push(row);
+    if (decision !== 'queued') continue;
+    const primary = pickPrimary(cand.sources);
+    queued.push({ ...cand, url: primary.url, sources: cand.sources, matchedAt: new Date().toISOString() });
   }
 
   // 30 天没再出现的候选清掉；本轮没搜到的老候选留着（搜索可能被预算截断）

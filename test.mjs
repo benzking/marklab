@@ -1259,3 +1259,67 @@ test('订阅：data/subs.json 每条都有 kind，sites/sort/pageLimit 残留一
     }
   }
 });
+
+test('订阅：查库不扫全库——libChecker 与 index().keys 结论一致', async (t) => {
+  const dup = await import('./dup.mjs');
+  const { LIB } = await import('./lib.mjs');
+  const { keys } = await dup.index(true);
+  if (!keys.size) {
+    t.skip('库是空的，没有可比的对象');
+    return;
+  }
+  const checker = dup.libChecker(LIB);
+  for (const key of keys) assert.equal(checker.has(key), true, `库里有的 ${key} 要认出来`);
+  assert.equal(checker.has('makeronline.cn:1'), keys.has('makeronline.cn:1'), '库里没有的结论也要一致');
+  assert.equal(checker.has('nosite:999999999'), false, '不存在的模型一律 false');
+});
+
+test('订阅：老订阅（只有 sites[]）迁移成按站一条规则', async () => {
+  const { migrateSub } = await import('./subs.mjs');
+  const old = { id: 'x', name: '老的', sites: ['creality', 'makerworld'], sort: 'downloads', pageLimit: 2, roundLimit: 50, keywords: ['皮卡丘'] };
+  const now = migrateSub({ ...old });
+  assert.equal(now.kind, 'keyword', '老订阅都是关键字订阅');
+  assert.deepEqual(
+    now.rules.map((r) => [r.site, r.limit]),
+    [
+      ['creality', 40],
+      ['makerworld', 40],
+    ],
+    'pageLimit 2 → 每站前 40 条',
+  );
+  assert.deepEqual(now.matchModes, ['name'], '老订阅没有匹配方式，按名字');
+  for (const dead of ['sites', 'sort', 'pageLimit', 'roundLimit']) assert.equal(dead in now, false, `迁移后不许残留 ${dead}`);
+  // 已经是新形状的不许动
+  const fresh = { kind: 'keyword', rules: [{ site: 'snapmaker', sort: 'newest', limit: 20 }], matchModes: ['tag'] };
+  assert.deepEqual(migrateSub({ ...fresh }), fresh, '新形状原样返回');
+});
+
+test('订阅：勾了 tag 但该站搜索结果不带标签时，退回用名字判', async () => {
+  const { decide } = await import('./subs.mjs');
+  const sub = { kind: 'keyword', matchModes: ['tag'], minLikes: 0, minDownloads: 0, pickedOnly: false };
+  const mk = (site, title, tags = []) => ({
+    title,
+    author: 'a',
+    tags,
+    sources: [{ site, id: '1', url: `https://x/${site}/1`, rank: 1, kw: '皮卡丘' }],
+  });
+  assert.equal(decide(mk('creality', '皮卡丘摆件'), sub), 'queued', '创想云不带标签，按名字判就该放行');
+  assert.equal(decide(mk('creality', '妙蛙种子'), sub), 'no-match', '名字不命中也不许放行');
+  assert.equal(decide(mk('makerworld', '妙蛙种子', ['皮卡丘']), sub), 'queued', 'MakerWorld 有标签，靠 tag 命中');
+  assert.equal(decide(mk('makerworld', '妙蛙种子', ['宝可梦']), sub), 'no-match', 'MakerWorld 标签也没命中就是没命中');
+});
+
+test('订阅：跨站合并的键与站点到达顺序无关，sources 带来源规则', async () => {
+  const { mergeSources } = await import('./subs.mjs');
+  const a = { site: 'makerworld', id: '10', title: '皮卡丘', author: 'a', tags: [], rank: 3, kw: '皮卡丘', rule: 'makerworld/score/100' };
+  const b = { site: 'creality', id: '99', title: '皮卡丘', author: 'a', tags: [], rank: 7, kw: '皮卡丘', rule: 'creality/downloads/50' };
+  const one = mergeSources([a, b]);
+  const two = mergeSources([b, a]);
+  assert.equal(one.length, 1, '标题+作者一样就合成一条');
+  assert.equal(one[0].key, two[0].key, '到达顺序换了，键不能跟着换');
+  assert.equal(one[0].sources.length, 2, '两个来源都记下来');
+  assert.ok(
+    one[0].sources.every((s) => s.rule),
+    'sources[] 每条都要带来源规则（spec §6.2）',
+  );
+});
