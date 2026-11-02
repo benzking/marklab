@@ -149,7 +149,8 @@ function cleanUsers(input) {
       if (!p) throw new Error(`认不出这个用户主页：${u}`);
       return { site: p.site, id: p.id, name: '' };
     }
-    if (!u || !search.SITES.includes(u.site) || !String(u.id || '').trim()) throw new Error('用户主页格式不对');
+    // 用 allSites() 而不是 SITES：SITES 在 import 时就冻住了，运行期注册的站点（测试假站点）认不出来
+    if (!u || !search.allSites().includes(u.site) || !String(u.id || '').trim()) throw new Error('用户主页格式不对');
     return { site: u.site, id: String(u.id).trim(), name: String(u.name || '').trim() };
   });
 }
@@ -213,6 +214,8 @@ export async function create(input = {}) {
     lastRunAt: null,
     lastResult: null,
   };
+  // 作者游标：首次全量翻不完就从这页接着翻，翻到底才置 done（spec §6.2「作者订阅的增量」）
+  if (sub.kind === 'author') sub.authorCursor = Object.fromEntries(sub.users.map((u) => [`${u.site}:${u.id}`, { page: 1, done: false }]));
   all.subs.push(sub);
   await persist();
   return sub;
