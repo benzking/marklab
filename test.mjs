@@ -7,6 +7,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { autoTags, catIndex, catOf, cookiesFor, inside, noFilesKind, resolveNuxt, sanitize, slugify } from './lib.mjs';
 import * as sitePacks from './sites/index.mjs';
 
@@ -761,10 +762,12 @@ test('判重索引每轮重建：只有元数据没文件的不算已入库', as
 });
 
 // ── 订阅：失败要记下来、一轮跑不完要接着跑 ──────────────────────
-async function runSubs(code) {
+async function runSubs(code, prep) {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-subs-'));
   await mkdir(path.join(base, 'data'), { recursive: true });
+  if (prep) await prep(base);
   const cp = spawn(process.execPath, ['-e', code], {
+    cwd: path.dirname(fileURLToPath(import.meta.url)), // 相对 import 跟着 test.mjs 走，worktree 里测的才是 worktree
     // NORATE：搜索节流是真等 15 秒，测试里关掉（跟 NOSPAWN 同一类缝）
     env: { ...process.env, MARKLAB_ROOT: base, MARKLAB_TEST_NOSPAWN: '1', MARKLAB_TEST_NORATE: '1' },
   });
@@ -965,4 +968,289 @@ test('搜索结果的 site 用包的规范键：别名换回域名，判重键�
   assert.equal((await search('makeronline', '')).site, 'makeronline.cn', '别名要换回规范键');
   assert.equal((await search('makeronline.com', '')).site, 'makeronline.com');
   assert.equal((await search('makerworld', '')).site, 'makerworld');
+});
+
+// ── 订阅改版（票 3）：spec §11 能纯函数验证的部分 ──────────────────
+// 纯函数直接 import；要跑运行器循环的用假站点子进程（不联网、不起浏览器）。
+const candOf = (kw = '皮卡丘', title = '皮卡丘 Pikachu') => ({
+  key: 'makerworld:1',
+  title,
+  tags: [],
+  likes: 99,
+  downloads: 999,
+  picked: true,
+  sources: [{ site: 'makerworld', id: 1, url: 'u1', rank: 1, kw }],
+});
+const kwSub = { kind: 'keyword', minLikes: 0, minDownloads: 0, pickedOnly: false, matchModes: ['name'] };
+
+test('订阅规则：不认识的站点直接报错，不许静默丢规则', async () => {
+  const { cleanRules } = await import('./subs.mjs');
+  assert.throws(() => cleanRules([{ site: 'no-such-site', limit: 20 }]), /规则里的站点不认识/, '不认识的站点要报错，静默丢规则等于订阅悄悄少跑一站');
+});
+
+test('订阅规则：站点不支持的排序回落该站默认序，不抛错', async () => {
+  const { cleanRules } = await import('./subs.mjs');
+  const { sortsOf } = await import('./search.mjs');
+  assert.equal(cleanRules([{ site: 'makerworld', sort: 'no-such-sort', limit: 20 }])[0].sort, sortsOf('makerworld')[0], '不支持的排序回落该站默认序');
+  assert.equal(cleanRules([{ site: 'makerworld', sort: 'likes', limit: 20 }])[0].sort, 'likes', '支持的排序原样保留');
+  assert.equal(cleanRules([{ site: 'makeronline.cn', limit: 20 }])[0].sort, sortsOf('makeronline.cn')[0] ?? null, '不传排序用该站默认序');
+});
+
+test('订阅规则：limit 夹在 1–1000，150 不许被凑成整页', async () => {
+  const { cleanRules } = await import('./subs.mjs');
+  assert.equal(cleanRules([{ site: 'makerworld', limit: 150 }])[0].limit, 150, '前 N 条是硬上限：150 就是 150');
+  assert.equal(cleanRules([{ site: 'makerworld', limit: 5000 }])[0].limit, 1000, '上限 1000');
+  assert.equal(cleanRules([{ site: 'makerworld', limit: -3 }])[0].limit, 1, '下限 1');
+  assert.deepEqual(cleanRules(null), [], '不是数组就当没有规则');
+});
+
+test('订阅：limit=150 只翻 8 页，第 8 页多出来的 10 条被丢掉', async () => {
+  const { out } = await runSubs(`
+    import * as sites from './sites/index.mjs';
+    import * as subs from './subs.mjs';
+    import { readFile } from 'node:fs/promises';
+    const pages = [];
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async ({ page }) => {
+        pages.push(page);
+        return { total: null, items: Array.from({ length: 20 }, (_, i) => {
+          const n = (page - 1) * 20 + i + 1;
+          return { site: 'fixture', id: 'm' + n, url: 'https://fixture.example/m' + n, title: '模型 ' + n, author: '作者' };
+        }) };
+      },
+      userModels: async () => ({ total: null, items: [] }),
+    });
+    const sub = await subs.create({ name: 't', keywords: ['皮卡丘'], rules: [{ site: 'fixture', limit: 150 }], matchModes: ['name'] });
+    const r = await subs.run(sub.id);
+    const file = JSON.parse(await readFile(process.env.MARKLAB_ROOT + '/data/subs/' + sub.id + '.candidates.json', 'utf8'));
+    const ranks = file.items.flatMap((c) => c.sources.map((s) => s.rank));
+    console.log(JSON.stringify({ searched: r.searched, pages, cands: file.items.length, maxRank: Math.max(...ranks), has151: ranks.includes(151) }));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.pages.join(','), '1,2,3,4,5,6,7,8', 'limit=150 只该翻 8 页（ceil(150/20)），不许翻第 9 页');
+  assert.equal(r.searched, 8, '八页就是八次搜索');
+  assert.equal(r.cands, 150, '候选正好 150 条：第 8 页多出来的 10 条要丢掉，不许凑整页');
+  assert.equal(r.maxRank, 150, '名次最大到 150');
+  assert.equal(r.has151, false, '第 151 条不许进候选');
+});
+
+test('订阅：库里有这个模型 → in-library，不入队', async () => {
+  const { decide } = await import('./subs.mjs');
+  assert.equal(decide(candOf(), kwSub, { libKeys: new Set(['makerworld:1']) }), 'in-library', '库里已有（下到文件）就不入队');
+});
+
+test('订阅：下载队列里已有这个网址 → in-queue，不入队', async () => {
+  const { decide } = await import('./subs.mjs');
+  assert.equal(decide(candOf(), kwSub, { busy: new Set(['u1']) }), 'in-queue', '队列里已有就不重复排');
+});
+
+test('订阅：门槛不够 → threshold，不入队', async () => {
+  const { decide } = await import('./subs.mjs');
+  assert.equal(decide(candOf(), { ...kwSub, minLikes: 1000 }, {}), 'threshold', '点赞不够要记 threshold');
+  assert.equal(decide(candOf(), { ...kwSub, pickedOnly: true }, {}), 'queued', '不卡精选时精选模型照常入队');
+});
+
+test('订阅：名字对不上来源词 → no-match，不入队', async () => {
+  const { decide } = await import('./subs.mjs');
+  assert.equal(decide(candOf('皮卡丘', '妙蛙种子'), kwSub, {}), 'no-match', '标题不含来源词不算命中');
+});
+
+test('订阅：四道闸都过了 → queued', async () => {
+  const { decide } = await import('./subs.mjs');
+  assert.equal(decide(candOf(), kwSub, { libKeys: new Set(), busy: new Set() }), 'queued', '四道闸都过才入队');
+});
+
+test('订阅：作者订阅没有门槛也没有匹配，恒 queued', async () => {
+  const { decide } = await import('./subs.mjs');
+  const sub = { kind: 'author', minLikes: 99999, minDownloads: 99999, pickedOnly: true, matchModes: ['name'] };
+  assert.equal(decide(candOf('拉布布', '妙蛙种子'), sub, {}), 'queued', '作者订阅：他发的我都要，门槛和名字匹配都不算数');
+  const cand = { ...candOf(), sources: [{ site: 'snapmaker', id: 9, url: 's9', rank: 1, kw: null }] };
+  assert.equal(decide(cand, { kind: 'author' }, {}), 'queued', '作者搜索结果没有来源词也照样入队');
+});
+
+test('订阅：跨站同标题同作者（大小写/空白不同）合成一条，sources 两条', async () => {
+  const { mergeSources } = await import('./subs.mjs');
+  const merged = mergeSources([
+    { site: 'snapmaker', id: 9, url: 's9', title: 'Pikachu 皮卡丘', author: 'Tom', rank: 1, kw: '皮卡丘', likes: 5, downloads: 5 },
+    { site: 'makerworld', id: 7, url: 'm7', title: 'pikachu皮卡丘 ', author: ' TOM ', rank: 5, kw: '皮卡丘', likes: 900, downloads: 900 },
+  ]);
+  assert.equal(merged.length, 1, '同标题同作者（归一后）只算一条候选');
+  assert.equal(merged[0].sources.length, 2, '两个来源都记下来');
+  assert.equal(merged[0].sources[0].site, 'makerworld', 'sources 里 MakerWorld 排第一');
+  assert.equal(merged[0].sources[0].rank, 5, '每条来源各带自己的名次');
+});
+
+test('订阅：跨站合并后入队取 MakerWorld，门槛数值也按它判', async () => {
+  const { mergeSources, pickPrimary } = await import('./subs.mjs');
+  const [cand] = mergeSources([
+    { site: 'snapmaker', id: 9, url: 's9', title: 'Pikachu', author: 'Tom', rank: 1, kw: 'pikachu', likes: 5, downloads: 5 },
+    { site: 'makerworld', id: 7, url: 'm7', title: 'pikachu', author: 'TOM', rank: 5, kw: 'pikachu', likes: 900, downloads: 900 },
+  ]);
+  const primary = pickPrimary(cand.sources);
+  assert.equal(primary.site, 'makerworld', '入队取 MakerWorld 优先');
+  assert.equal(primary.url, 'm7', '入队用主来源的网址');
+  assert.equal(cand.downloads, 900, '门槛数值取主来源那条，展示和判定才一致');
+  assert.equal(cand.likes, 900, '点赞同样取主来源');
+});
+
+test('订阅：同一模型被两条规则搜到也只算一条候选，两条来源各记名次', async () => {
+  const { mergeSources } = await import('./subs.mjs');
+  const merged = mergeSources([
+    { site: 'makerworld', id: 7, url: 'm7', title: '皮卡丘', author: 'Tom', rank: 3, kw: '皮卡丘' },
+    { site: 'makerworld', id: 7, url: 'm7', title: '皮卡丘', author: 'Tom', rank: 41, kw: '皮卡丘' },
+  ]);
+  assert.equal(merged.length, 1, '同一个 site:id 搜到两次只留一条候选');
+  assert.deepEqual(merged[0].sources.map((s) => s.rank), [3, 41], '两次搜索的名次都记下来');
+});
+
+test('订阅：匹配用的是这条候选的来源词，不是订阅里任一词', async () => {
+  const { decide } = await import('./subs.mjs');
+  const sub = { ...kwSub, keywords: ['皮卡丘', '拉布布'] };
+  assert.equal(decide(candOf('皮卡丘'), sub, {}), 'queued', '来源词就是标题里的词 → 命中');
+  assert.equal(decide(candOf('拉布布'), sub, {}), 'no-match', '标题是「皮卡丘」但来源词是「拉布布」→ 不算命中，防跨词误伤');
+  const two = { ...candOf('拉布布'), sources: [
+    { site: 'snapmaker', id: 2, url: 's2', rank: 1, kw: '拉布布' },
+    { site: 'makerworld', id: 1, url: 'u1', rank: 2, kw: '皮卡丘' },
+  ] };
+  assert.equal(decide(two, sub, {}), 'queued', '任一来源词命中就算命中');
+});
+
+test('订阅：tag 匹配也只看来源词', async () => {
+  const { decide } = await import('./subs.mjs');
+  const sub = { ...kwSub, keywords: ['皮卡丘', '拉布布'], matchModes: ['tag'] };
+  const cand = { ...candOf('拉布布', '妙蛙种子'), tags: ['皮卡丘'] };
+  assert.equal(decide(cand, sub, {}), 'no-match', 'tag 含「皮卡丘」但来源词是「拉布布」→ 不命中');
+  const hit = { ...cand, tags: ['可爱皮卡丘摆件'], sources: [{ ...cand.sources[0], kw: '皮卡丘' }] };
+  assert.equal(decide(hit, sub, {}), 'queued', 'tag 含来源词 → 命中');
+});
+
+test('订阅：作者游标从 {page:1,done:false} 开始，翻到底才置 done 并归 1', async () => {
+  const libIds = Array.from({ length: 20 }, (_, i) => 'a' + i);
+  const { out } = await runSubs(
+    `
+    import * as sites from './sites/index.mjs';
+    import * as subs from './subs.mjs';
+    const pages = [];
+    const libItems = Array.from({ length: 20 }, (_, i) => ({ site: 'fixture', id: 'a' + i, url: 'https://fixture.example/a' + i, title: '旧模型 ' + i, author: '作者' }));
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async () => ({ total: null, items: [] }),
+      userModels: async ({ page }) => {
+        pages.push(page);
+        if (page === 1) return { total: null, items: libItems };
+        if (page === 2) return { total: null, items: [{ site: 'fixture', id: 'new1', url: 'https://fixture.example/new1', title: '新模型', author: '作者' }] };
+        return { total: null, items: [] };
+      },
+    });
+    const sub = await subs.create({ kind: 'author', name: 't', users: [{ site: 'fixture', id: 'u1', name: '作者' }] });
+    const before = JSON.parse(JSON.stringify(sub.authorCursor));
+    const r = await subs.run(sub.id);
+    console.log(JSON.stringify({ before, pages, after: sub.authorCursor, matched: r.sub.lastResult.matched }));
+  `,
+    async (base) => {
+      for (const id of libIds) {
+        const dir = path.join(base, 'library', 'fixture-' + id);
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, 'model.json'), JSON.stringify({ platform: 'fixture', id, title: '旧模型 ' + id, author: '作者', fetchedAt: new Date().toISOString(), savedFiles: [{ name: 'a.stl' }] }));
+      }
+    },
+  );
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.deepEqual(r.before, { 'fixture:u1': { page: 1, done: false } }, '作者游标初始是 {page:1,done:false}');
+  assert.equal(r.pages.join(','), '1,2,3', 'done 之前不许「连续 20 条就停」：第 1 页 20 条都在库里也要接着翻第 2 页');
+  assert.deepEqual(r.after['fixture:u1'], { page: 1, done: true }, '翻到底（空页）才置 done，页码归 1');
+  assert.equal(r.matched, 1, '第 2 页那条没入库的新模型要入队');
+});
+
+test('订阅：作者翻到底之后才启用「连续 20 条就停」，第二轮只翻一页', async () => {
+  const libIds = Array.from({ length: 20 }, (_, i) => 'a' + i);
+  const { out } = await runSubs(
+    `
+    import * as sites from './sites/index.mjs';
+    import * as subs from './subs.mjs';
+    let round = 0;
+    const pages = [];
+    const libItems = Array.from({ length: 20 }, (_, i) => ({ site: 'fixture', id: 'a' + i, url: 'https://fixture.example/a' + i, title: '旧模型 ' + i, author: '作者' }));
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async () => ({ total: null, items: [] }),
+      userModels: async ({ page }) => {
+        pages.push(page);
+        if (round === 0) return { total: null, items: [] };
+        if (page === 1) return { total: null, items: libItems };
+        if (page === 2) return { total: null, items: [{ site: 'fixture', id: 'new1', url: 'https://fixture.example/new1', title: '新模型', author: '作者' }] };
+        return { total: null, items: [] };
+      },
+    });
+    const sub = await subs.create({ kind: 'author', name: 't', users: [{ site: 'fixture', id: 'u1', name: '作者' }] });
+    const first = await subs.run(sub.id); // 首轮空页 → 翻到底，done=true
+    round = 1;
+    pages.length = 0;
+    const second = await subs.run(sub.id);
+    console.log(JSON.stringify({ firstSearched: first.searched, pages, searched: second.searched, matched: second.hits.length, done: sub.authorCursor['fixture:u1'] }));
+  `,
+    async (base) => {
+      for (const id of libIds) {
+        const dir = path.join(base, 'library', 'fixture-' + id);
+        await mkdir(dir, { recursive: true });
+        await writeFile(path.join(dir, 'model.json'), JSON.stringify({ platform: 'fixture', id, title: '旧模型 ' + id, author: '作者', fetchedAt: new Date().toISOString(), savedFiles: [{ name: 'a.stl' }] }));
+      }
+    },
+  );
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.firstSearched, 1, '首轮空页就算翻到底');
+  assert.deepEqual(r.pages, [1], 'done 之后撞到一页全在库里就停，不许再往第 2 页翻');
+  assert.equal(r.searched, 1, '第二轮只搜了一页');
+  assert.equal(r.matched, 0, '第 2 页那条新模型这轮不该被发现（增量从最新往旧扫，撞到一页旧的就收工）');
+});
+
+test('订阅：关键字订阅的任务 = 关键字 × 规则', async () => {
+  const { planJobs } = await import('./subs.mjs');
+  const jobs = planJobs({
+    kind: 'keyword',
+    keywords: ['皮卡丘', '拉布布'],
+    rules: [{ site: 'makerworld', sort: 'score', limit: 100 }, { site: 'snapmaker', sort: 'downloads', limit: 50 }],
+  });
+  assert.equal(jobs.length, 4, '两个关键字 × 两条规则 = 四个任务');
+  assert.equal(jobs.filter((j) => j.site === 'makerworld').length, 2, '每站各两个任务');
+  assert.deepEqual(jobs.map((j) => j.kw).sort(), ['拉布布', '拉布布', '皮卡丘', '皮卡丘'], '每个关键字都要搜');
+  assert.ok(jobs.every((j) => j.kind === 'keyword' && j.rule), '每个任务都带自己的规则');
+});
+
+test('订阅：作者订阅的任务 = 一人一个，没有关键字也没有规则', async () => {
+  const { planJobs } = await import('./subs.mjs');
+  const jobs = planJobs({ kind: 'author', users: [{ site: 'makerworld', id: 'a' }, { site: 'snapmaker', id: 'b' }], keywords: ['x'], rules: [{ site: 'makerworld', limit: 20 }] });
+  assert.equal(jobs.length, 2, '两个作者两个任务');
+  assert.ok(jobs.every((j) => j.kind === 'author' && j.user && !j.kw && !j.rule), '作者任务只跑主页');
+});
+
+test('订阅：data/subs.json 每条都有 kind，sites/sort/pageLimit 残留一个不剩', async (t) => {
+  const { ROOT } = await import('./lib.mjs');
+  let raw;
+  try {
+    raw = JSON.parse(readFileSync(path.join(ROOT, 'data', 'subs.json'), 'utf8'));
+  } catch {
+    t.skip('没有 data/subs.json（新装或 CI），跳过迁移后形状检查');
+    return;
+  }
+  assert.ok(Array.isArray(raw.subs), 'subs 要是数组');
+  for (const s of raw.subs) {
+    assert.ok(['keyword', 'author'].includes(s.kind), `每条订阅都要有 kind（keyword/author），实际：${JSON.stringify(s.kind)}`);
+    for (const dead of ['sites', 'sort', 'pageLimit', 'roundLimit']) {
+      assert.equal(dead in s, false, `迁移后不许残留 ${dead}：${s.name || s.id}`);
+    }
+    if (s.kind === 'keyword') {
+      assert.ok(s.rules.length > 0, `关键字订阅要有候选规则：${s.name || s.id}`);
+      assert.ok(s.matchModes.length > 0, `关键字订阅要有匹配方式：${s.name || s.id}`);
+    } else {
+      assert.ok(s.users.length > 0, `作者订阅要有用户主页：${s.name || s.id}`);
+    }
+  }
 });
