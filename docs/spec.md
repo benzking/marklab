@@ -391,7 +391,7 @@ library/<platform>-<id>/
 - 同一模型在多个站搜到 → 合成一条候选，`sources[]` 记全部 `{site, url, rank, kw, rule}`；
   **入队取 MakerWorld 优先**，其余按名次。
 - 落盘 `data/subs/<id>.candidates.json`，键 `site:id`，每条记
-  `{sources, title, author, tags, decision, firstSeen, lastSeen}`。`decision` ∈
+  `{key, sources, title, author, tags, decision, firstSeen, lastSeen}`。`decision` ∈
   `queued | no-match | threshold | in-library | in-queue`，这就是「为什么没进队列」的答案。
   30 天没再出现就清。
 - **这个文件是台账，不是缓存**：每轮都重新判定，不沿用上次结论。判定是本地读盘（毫秒级），
