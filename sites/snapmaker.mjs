@@ -245,6 +245,8 @@ export async function fileLinks(model) {
 /** 搜索结果 → 统一 Item（docs/spec.md §9.5）。缺字段给安全默认值，不抛。 */
 export function normalize(raw) {
   const id = raw?.id == null ? '' : String(raw.id);
+  // 列表接口没有 tags，只有中文译名 translatedTags（docs/spec.md §6.2）；有 tags 就用 tags
+  const siteTags = Array.isArray(raw?.tags) && raw.tags.length ? raw.tags : Array.isArray(raw?.translatedTags) ? raw.translatedTags : [];
   return {
     site: 'snapmaker',
     id,
@@ -258,11 +260,7 @@ export function normalize(raw) {
     comments: null, // 接口没有评论数
     picked: Boolean(raw?.is_official_pick),
     publishedAt: iso(raw?.published_at),
-    tags: Array.isArray(raw?.tags)
-      ? raw.tags.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean)
-      : Array.isArray(raw?.translatedTags)
-        ? raw.translatedTags.filter((t) => typeof t === 'string')
-        : [],
+    tags: siteTags.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean),
   };
 }
 
@@ -329,7 +327,7 @@ export async function categories() {
   return roots.flatMap((r) => r.children || []).map(pick);
 }
 
-export default {
+const pack = {
   site: 'snapmaker',
   platform: 'snapmaker',
   label: 'Snapmaker',
@@ -342,10 +340,12 @@ export default {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'] },
+  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: true },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'snapmaker.mjs') {
@@ -362,5 +362,8 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'snapmaker.mjs') {
   console.assert(objectAround(flight, '"partitions"')?.secs === 10, 'RSC 括号配对');
   console.assert(objectAround('no key here', '"partitions"') === null, '找不到 key 返回 null');
 
+  console.assert(normalize({ id: 10, translatedTags: ['可爱', '摆件'] }).tags.join() === '可爱,摆件', 'translatedTags 归到 tags');
+  console.assert(normalize({ id: 11, tags: ['benchy'], translatedTags: ['可爱'] }).tags.join() === 'benchy', 'raw.tags 有值优先');
+  console.assert(pack.searchOptions.tags === true, 'Snapmaker 搜索结果带 tags（译名）');
   console.log('snapmaker pack demo ok');
 }

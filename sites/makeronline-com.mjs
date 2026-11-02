@@ -321,7 +321,7 @@ export async function categories() {
   }));
 }
 
-export default {
+const pack = {
   site: 'makeronline.com',
   platform: PLATFORM,
   label: 'MakerOnline.com',
@@ -336,10 +336,12 @@ export default {
   fileLinks,
   categories,
   // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
-  searchOptions: { sorts: [] },
+  searchOptions: { sorts: [], tags: false },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-com.mjs') {
@@ -355,5 +357,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-com.mjs') {
   console.assert(n.publishedAt === null && n.tags.length === 0, '缺字段默认');
   console.assert(normalize({ mold_id: 2, created_at: '2024-09-29 23:52:22' }).publishedAt?.startsWith('2024-09-29'), '发布时间读 created_at（接口字段名是 created_at，不是 created_time）');
 
+  console.assert(pack.searchOptions.tags === false, '搜索结果不带标签');
   console.log('makeronline.com pack demo ok');
 }
