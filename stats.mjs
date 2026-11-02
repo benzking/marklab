@@ -9,8 +9,6 @@ const LIB = path.join(ROOT, 'library');
 const DAY = 86_400_000;
 const TTL = 60_000; // 遍历 4.7G 只要 74ms，但别让连点把盘读穿
 
-const SITE_LABEL = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', makeronline: 'MakerOnline' };
-
 /** 北京时间今天 00:00 对应的 UTC 毫秒。 */
 export function dayStart(now = new Date(), daysAgo = 0) {
   const bj = new Date(now.getTime() + 8 * 3600_000);
@@ -33,6 +31,31 @@ export function windowCount(times, now = new Date()) {
     if (ms >= t30) d30++;
   }
   return { today, d7, d30 };
+}
+
+/** 有 3mf 才算「抓成功」：站点给了一堆 stl 和图片但没工程文件，打印的人还是要再切一遍。
+ *  纯函数，test.mjs 有断言。返回 `{days: ['10-27'…'11-02'], daily: {site: [7 个计数]}}`，最老 → 今天。 */
+export function daily7(models, now = new Date()) {
+  const starts = [];
+  const days = [];
+  for (let i = 6; i >= 0; i--) {
+    const ms = dayStart(now, i);
+    starts.push(ms);
+    const bj = new Date(ms + 8 * 3600_000);
+    days.push(`${String(bj.getUTCMonth() + 1).padStart(2, '0')}-${String(bj.getUTCDate()).padStart(2, '0')}`);
+  }
+  const daily = {};
+  for (const m of models) {
+    if (!(m.savedFiles || []).some((f) => /\.3mf$/i.test(f.name || ''))) continue;
+    const ms = Date.parse(m.fetchedAt);
+    if (!Number.isFinite(ms)) continue;
+    let idx = -1;
+    for (let i = starts.length - 1; i >= 0; i--) if (ms >= starts[i]) { idx = i; break; }
+    if (idx < 0) continue; // 7 天以前的老货不上图
+    if (!daily[m.platform]) daily[m.platform] = Array(7).fill(0);
+    daily[m.platform][idx]++;
+  }
+  return { days, daily };
 }
 
 /** 纯函数：磁盘条目 → 按类别汇总。kind: 'files' | 'img' | 'other' */
@@ -121,8 +144,21 @@ export async function workbench(force = false) {
 
   const models = await readModels();
 
+  // 每站：库内模型数 + 最近一次入库时间 + 待补抓数（控制台站点包卡片直接读它）
   const bySite = {};
-  for (const m of models) bySite[m.platform] = (bySite[m.platform] || 0) + 1;
+  const lastFetch = {};
+  const pending = {};
+  const last24h = {};
+  const since = Date.now() - DAY;
+  for (const m of models) {
+    bySite[m.platform] = (bySite[m.platform] || 0) + 1;
+    if (m.fetchedAt && (!lastFetch[m.platform] || m.fetchedAt > lastFetch[m.platform])) lastFetch[m.platform] = m.fetchedAt;
+    if (m.fetchedAt && Date.parse(m.fetchedAt) >= since) last24h[m.platform] = (last24h[m.platform] || 0) + 1;
+    if (!(m.savedFiles || []).length && (m.files || []).length > 0 && m.noFiles !== 'skipped') {
+      pending[m.platform] = (pending[m.platform] || 0) + 1;
+    }
+  }
+  const chart = daily7(models);
 
   const disk = diskFromModels(models);
   disk.free = await freeSpace();
@@ -150,7 +186,7 @@ export async function workbench(force = false) {
 
   cache = {
     at: new Date().toISOString(),
-    models: { total: models.length, bySite },
+    models: { total: models.length, bySite, lastFetch, pending, last24h, daily: chart.daily, days: chart.days },
     counts,
     disk,
     health,
@@ -161,8 +197,6 @@ export async function workbench(force = false) {
   cacheAt = Date.now();
   return cache;
 }
-
-export { SITE_LABEL };
 
 // 自检：不联网、不读盘，只验口径和汇总。
 if (path.basename(process.argv[1] || '') === 'stats.mjs') {

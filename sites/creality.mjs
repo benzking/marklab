@@ -9,7 +9,7 @@
 //
 // 对外形状见 docs/spec.md §2。
 import * as ch from '../channel.mjs';
-import { resolveNuxt, sanitize, fmtHours, str, num, iso } from '../lib.mjs';
+import { resolveNuxt, sanitize, fmtHours, str, num, iso, cookiesFor } from '../lib.mjs';
 import { httpGet } from './_http.mjs';
 
 const HOSTS = ['crealitycloud.cn'];
@@ -43,10 +43,7 @@ export function match(raw) {
 export async function loginState() {
   const all = await ch.cookies();
   if (!all) return { ok: false, status: 'unknown', reason: '浏览器未连接' };
-  const map = {};
-  for (const c of all) {
-    if (HOSTS.some((h) => c.domain === h || c.domain === `.${h}` || c.domain.endsWith(h))) map[c.name] = c.value;
-  }
+  const map = cookieMap(all);
   if (!map.model_token) return { ok: false, status: 'logged-out' };
   const r = await ch.fetchAs('creality', `${SITE}/api/cxy/v3/user/getInfo`, {
     method: 'POST',
@@ -57,6 +54,86 @@ export async function loginState() {
   const j = await r.json().catch(() => null);
   const name = j?.result?.profileUserInfo?.base?.nickName;
   return name ? { ok: true, status: 'logged-in', name } : { ok: false, status: 'logged-out' };
+}
+
+function cookieMap(all) {
+  const map = {};
+  for (const c of cookiesFor(all, HOSTS)) map[c.name] = c.value;
+  return map;
+}
+
+// 签到接口比取模型挑头：少一个 `__cxy_os_*` / `__cxy_timezone_` / `__cxy_app_ch_` 就回 code 1
+// Invalid Parameter（2026-11-02 实测，逐个头试没用，整组照抄 web 端最稳）。
+const CHECKIN_HEADERS = {
+  ...APP_HEADERS,
+  __cxy_app_ch_: 'Chrome 153.0.0.0',
+  __cxy_os_lang_: '1',
+  __cxy_os_ver_: 'Linux',
+  __cxy_timezone_: '0',
+  accept: 'application/json',
+};
+
+/** checkinDay 是 UTC 零点对齐的秒，比「是不是今天」就比这个取整值。纯函数，test.mjs 有断言。 */
+export const dayNum = (sec) => Math.floor(sec / 86400);
+
+/** 签到接口的鉴权头 + 统一错误处理。签到和 status() 共用，免得两处各拼一遍。 */
+async function checkinApi() {
+  const all = await ch.cookies();
+  if (!all) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）');
+  const map = cookieMap(all);
+  if (!map.model_token) throw new Error('未登录：浏览器里没有创想云的 __cxy_token_');
+  const headers = {
+    ...CHECKIN_HEADERS,
+    __cxy_token_: map.model_token,
+    __cxy_uid_: map.model_user_id || '',
+    __cxy_duid_: map.model_device_id || '',
+    __cxy_requestid_: crypto.randomUUID(),
+  };
+  return async (path) => {
+    const r = await ch.fetchAs('creality', `${SITE}${path}`, { method: 'POST', headers, body: '{}' });
+    if (!r) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）');
+    const j = await r.json().catch(() => null);
+    if (j?.code === 0) return j.result || {};
+    // 1088/1089 是限流：一次签到只发一个请求，绝不重试（站点会继续加码）
+    if (j?.code === 1088 || j?.code === 1089) throw new Error(`限流（code ${j.code}）：过几分钟再来，别重试`);
+    throw new Error(`接口拒绝：${j?.msg || r.status}`);
+  };
+}
+
+/** 只读：今天签没签 + 连签几天。getLastCheckin 不产生签到副作用。 */
+async function lastCheckinState() {
+  const call = await checkinApi();
+  const last = (await call('/api/cxy/v2/task/getLastCheckin')).lastCheckin;
+  const signed = !!last && dayNum(last.checkinDay) === dayNum(Date.now() / 1000);
+  return { signed, streak: last?.continueStep || 0 };
+}
+
+/** 签到：checkinV2 幂等（重复签也回 code 0），所以不靠错误码判「今天签没签」，只认 getLastCheckin。 */
+export async function checkin({ dry = false } = {}) {
+  if (dry) {
+    const s = await lastCheckinState();
+    return { signed: s.signed, streak: s.streak };
+  }
+  const call = await checkinApi();
+  const res = await call('/api/cxy/v2/task/checkinV2');
+  return { signed: true, streak: res.continueDays || 0 };
+}
+
+/** 积分余额 + 签到状态（控制台卡片第二行）。登录态走 loginState()，这里不重复判。
+ *  积分只在 getInfo 的 walletUserInfo 里：kwbeans 是「普通积分」（兑换商城用的那个），
+ *  expPoints 是累计经验，星标积分是 coin。2026-11-02 实测 114/115/0，对得上站点的「积分」页。 */
+export async function checkinStatus() {
+  const call = await checkinApi();
+  const last = (await call('/api/cxy/v2/task/getLastCheckin')).lastCheckin;
+  const info = await call('/api/cxy/v3/user/getInfo');
+  const points = Number(info?.walletUserInfo?.kwbeans);
+  const signed = !!last && dayNum(last.checkinDay) === dayNum(Date.now() / 1000);
+  // 今天签到得了多少分：rewards 里每种奖励一项，签过才有
+  const gain = signed ? (last?.rewards || []).reduce((n, r) => n + (Number(r?.rewardValue) || 0), 0) : 0;
+  return {
+    ...(Number.isFinite(points) ? { points } : {}),
+    checkin: { signed, streak: last?.continueStep || 0, ...(signed ? { gain } : {}) },
+  };
 }
 
 async function postJson(path, body, referer) {
@@ -113,7 +190,9 @@ export async function meta(url) {
   try {
     const j = await postJson('/api/cxy/v3/model/fileListPage', { modelId: id, page: 1, pageSize: 200 }, canonical);
     if (j.code === 0 && j.result?.list?.length) allStl = j.result.list;
-  } catch {}
+  } catch (e) {
+    console.warn('fileListPage 失败，退回 SSR 的第一页：' + e.message);
+  }
 
   const stlFiles = allStl.map((f) => ({
     name: f.fileName + (f.fileFormat || ''),
@@ -133,7 +212,9 @@ export async function meta(url) {
       format: (d.fileFormat || '').replace('.', ''),
       id: d.id,
     }));
-  } catch {}
+  } catch (e) {
+    console.warn('fileOtherListPage 失败，文档清单留空：' + e.message);
+  }
 
   return {
     platform: 'creality',
@@ -190,7 +271,7 @@ export async function fileLinks(model) {
   // 「没登录」和「解析没拿到链接」（noFiles 会记错原因）。
   const all = await ch.cookies();
   if (!all) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）再抓');
-  const mine = all.filter((c) => HOSTS.some((h) => c.domain === h || c.domain === `.${h}` || c.domain.endsWith(h)));
+  const mine = cookiesFor(all, HOSTS);
   const cookieOf = (name) => mine.find((c) => c.name === name)?.value || '';
   if (!cookieOf('model_token')) throw new Error('下载链接要登录：先在浏览器登录创想云');
 
@@ -356,7 +437,7 @@ export async function categories() {
     }));
 }
 
-export default {
+const pack = {
   site: 'creality',
   // 这个接口按设计就要登录（签名链接靠登录态算），匿名优先在它身上没意义
   loginOnly: ['/api/cxy/v3/model/memberDownload', '/api/cxy/v3/model/3mfDownload'],
@@ -368,12 +449,17 @@ export default {
   match,
   matchUser,
   loginState,
+  checkin,
+  checkinStatus,
   meta,
   fileLinks,
   categories,
+  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: false },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
@@ -410,5 +496,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
   console.assert(trimSiteOnly(siteOnly, []) === null, '全拿到就删字段');
   console.assert(trimSiteOnly(undefined, [p1]) === null, '没有兜底条目也不炸');
 
+  console.assert(pack.searchOptions.tags === false, '创想云搜索结果不带标签');
   console.log('creality pack demo ok');
 }

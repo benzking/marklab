@@ -4,12 +4,14 @@
 import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
-import { ROOT } from './lib.mjs';
-import { match as matchSite } from './sites/index.mjs';
+import { ROOT, writeJson } from './lib.mjs';
+import { all as allPacks, byName, match as matchSite } from './sites/index.mjs';
 
 const TASKS_DIR = path.join(ROOT, 'data', 'tasks');
 // 暂停开关存盘：重启后停在暂停，直到人点「继续」（否则 systemd 一重启就把几十条任务全放出来）
 const STATE_FILE = path.join(ROOT, 'data', 'queue.json');
+// 站点自定义限速（ADR-0006）：控制台改这里，别去改 env
+const SITE_CONFIG_FILE = path.join(ROOT, 'data', 'site-config.json');
 
 // 单条任务的墙钟上限（30 分钟）。测试里可以调小，别等半小时
 const TIMEOUT_MS = Number(process.env.MARKLAB_TASK_TIMEOUT_MS) || 30 * 60_000;
@@ -21,8 +23,8 @@ const FLOOR = 60;
 const readGap = (v, def) => Math.max(Number(v) || def, FLOOR) * 1000;
 let MIN_GAP = readGap(process.env.MARKLAB_MIN_GAP, 60);
 let MAX_GAP = Math.max(readGap(process.env.MARKLAB_MAX_GAP, 120), MIN_GAP);
-// 测试缝：读当前两道闸门的毫秒值
-export const _testGaps = () => [MIN_GAP, MAX_GAP];
+/** 全局默认的模型间隔（毫秒）。控制台拿它当输入框的占位值，测试拿它验地板。 */
+export const gapsMs = () => [MIN_GAP, MAX_GAP];
 const KEEP = 500; // 内存里留多少条，更老的只在 jsonl 里
 // 测试缝：不真的起 grab 子进程（队列语义的测试不该联网、不该开浏览器）
 const NO_SPAWN = process.env.MARKLAB_TEST_NOSPAWN === '1';
@@ -34,7 +36,10 @@ const lanes = new Map(); // site -> [task]
 let laneCursor = 0; // 轮转指针，指向上次取过的下一条队
 let running = null;
 let current = null; // 正在跑的子进程，停止时要 kill
-let nextOkAt = 0; // 下一次允许开始下载的时刻
+// 每站一个闸门（ADR-0006）：某站间隔没到只推迟这个站，别的站照跑
+const gates = new Map(); // site -> 下一次允许开始的时刻
+// 站点自定义限速：site -> { modelGapSec: [min, max] }，只收这一个字段
+let siteConfig = {};
 let fileSeen = 0; // 已并入内存的 jsonl 字节数，用来发现别的进程（bulk.mjs）写进来的任务
 // 调试用的总闸：暂停后队列一条都不开跑（在跑的那条跑完为止），只有人手动动作能放行。
 let paused = false;
@@ -52,6 +57,68 @@ export function setGap(minSec, maxSec) {
   if (Number(minSec) >= FLOOR) MIN_GAP = Number(minSec) * 1000;
   if (Number(maxSec) >= FLOOR) MAX_GAP = Math.max(Number(maxSec) * 1000, MIN_GAP);
 }
+
+/**
+ * 某站模型之间的间隔（毫秒）：用户覆盖 > 包里的 rate > 全局默认，三层都过 60 秒地板。
+ * 没有覆盖就返回全局那对值，不额外造对象。
+ */
+function gapOf(site) {
+  const own = siteConfig[site || '_']?.modelGapSec;
+  const pack = byName(site)?.rate?.modelGapSec;
+  const src = (v) => (Array.isArray(v) && v.length === 2 ? v : null);
+  const pick = src(own) || src(pack);
+  if (!pick) return [MIN_GAP, MAX_GAP];
+  const min = readGap(pick[0], MIN_GAP / 1000);
+  return [min, Math.max(readGap(pick[1], MAX_GAP / 1000), min)];
+}
+
+/** 推这个站的闸门：这一轮打扰过站点，就得等够它自己的间隔。 */
+function pushGate(site) {
+  const [lo, hi] = gapOf(site);
+  gates.set(site || '_', Date.now() + lo + Math.random() * Math.max(0, hi - lo));
+}
+
+const gateOpen = (site) => Date.now() >= (gates.get(site || '_') || 0);
+
+/** 还要等多久才有站解禁（没有任务在等就是 0）。 */
+function waitMs() {
+  let best = Infinity;
+  for (const [k, l] of lanes) if (l.length) best = Math.min(best, (gates.get(k) || 0) - Date.now());
+  return Number.isFinite(best) ? Math.max(best, 0) : 0;
+}
+
+/** 站点自定义限速：读盘 / 写盘。只认三个字段，别的键一律丢。
+ *  `modelGapSec: [min, max]` 秒（下载间隔，进来就过 60 秒地板）、
+ *  `searchPerMin: N`（每分钟搜几次）、`checkinAuto: bool`（每天自动签到一次）。 */
+export async function siteConfigLoad() {
+  try {
+    siteConfig = JSON.parse(await readFile(SITE_CONFIG_FILE, 'utf8')) || {};
+  } catch {} // 没配过就是全跟随全局默认
+  return siteConfig;
+}
+
+export async function siteConfigSet(next) {
+  const clean = {};
+  for (const [site, v] of Object.entries(next || {})) {
+    if (!byName(site)) continue; // 不认识的站名不落盘，免得配置里长出拼错的键
+    const out = {};
+    const g = v?.modelGapSec;
+    if (Array.isArray(g) && g.length === 2) {
+      const min = readGap(g[0], MIN_GAP / 1000);
+      out.modelGapSec = [min / 1000, Math.max(readGap(g[1], MAX_GAP / 1000), min) / 1000];
+    }
+    const n = Number(v?.searchPerMin);
+    if (Number.isFinite(n) && n > 0) out.searchPerMin = Math.min(Math.round(n), 60);
+    if (typeof v?.checkinAuto === 'boolean') out.checkinAuto = v.checkinAuto;
+    if (Object.keys(out).length) clean[site] = out;
+  }
+  siteConfig = clean;
+  await mkdir(path.dirname(SITE_CONFIG_FILE), { recursive: true });
+  await writeJson(SITE_CONFIG_FILE, clean);
+  return siteConfig;
+}
+
+export const siteConfigGet = () => siteConfig;
 
 /** 列表，最新的在前。 */
 export function list({ limit = 200 } = {}) {
@@ -134,6 +201,8 @@ function shiftNext() {
     const idx = (laneCursor + i) % keys.length;
     const l = lanes.get(keys[idx]);
     if (!l.length) continue;
+    // 这个站的间隔还没走完：让它等着，别的站照跑（ADR-0006）
+    if (!NO_SPAWN && !gateOpen(keys[idx])) continue;
     laneCursor = (idx + 1) % keys.length;
     const t = l.shift();
     if (!l.length) lanes.delete(keys[idx]);
@@ -145,6 +214,8 @@ function shiftNext() {
 /** 暂停中只找带 force 的那一条（手动点的），别的一条都不放行。 */
 function shiftForce() {
   for (const [k, l] of lanes) {
+    // 手动插队也过闸门：连点「开始」不该把间隔撞穿
+    if (!NO_SPAWN && !gateOpen(k)) continue;
     const i = l.findIndex((t) => t.force);
     if (i < 0) continue;
     const t = l.splice(i, 1)[0];
@@ -170,7 +241,13 @@ export function queueDepth() {
 
 /** 队列状态：控制台那个暂停/继续按钮读它。 */
 export function state() {
-  return { paused, queued: queuedCount(), running: running ? running.id : null, nextOkAt };
+  return {
+    paused,
+    queued: queuedCount(),
+    running: running ? running.id : null,
+    nextOkAt: Math.max(0, ...gates.values()), // 兼容老前端：所有站里最晚的那个
+    gates: Object.fromEntries(gates), // 每站各自的解禁时刻
+  };
 }
 
 async function saveState() {
@@ -182,7 +259,10 @@ async function saveState() {
     const ids = [];
     for (const l of lanes.values()) for (const t of l) ids.push(t.id);
     if (running) ids.push(running.id);
-    await writeFile(tmp, JSON.stringify({ paused, nextOkAt, queued: ids }));
+    await writeFile(
+      tmp,
+      JSON.stringify({ paused, nextOkAt: Math.max(0, ...gates.values()), gates: Object.fromEntries(gates), queued: ids }),
+    );
     await rename(tmp, STATE_FILE);
   } catch {}
 }
@@ -299,10 +379,10 @@ function finish(task, ok, error, phase) {
     task.errorDetail = null;
   }
   if ((task.progress || {}).done > 0) {
-    nextOkAt = Date.now() + MIN_GAP + Math.random() * Math.max(0, MAX_GAP - MIN_GAP);
+    pushGate(task.site);
   } else if (task.startedAt) {
     // 上一轮对站点发过请求（抓到元数据也算），闸门照推——没下到文件不是没打扰站点
-    nextOkAt = Date.now() + MIN_GAP + Math.random() * Math.max(0, MAX_GAP - MIN_GAP);
+    pushGate(task.site);
   }
   saveState().catch(() => {}); // 闸门持久化：重启后别立刻放行
   persist(task).catch(() => {});
@@ -368,13 +448,13 @@ async function pump() {
   if (running) return;
   // 暂停：只放行手动点的那一条（force），其它一条都不开跑
   if (paused && ![...lanes.values()].some((l) => l.some((t) => t.force))) return;
-  if (!NO_SPAWN && Date.now() < nextOkAt) {
-    // 上一轮下过文件：等够间隔再开下一个，别连着撞站点
-    setTimeout(pump, Math.min(nextOkAt - Date.now(), 30_000));
+  const task = paused ? shiftForce() : shiftNext();
+  if (!task) {
+    // 有任务在等，但闸门都关着：等到最早的那个解禁再试
+    const wait = waitMs();
+    if (!paused && wait > 0) setTimeout(pump, Math.min(wait, 30_000));
     return;
   }
-  const task = paused ? shiftForce() : shiftNext();
-  if (!task) return;
   running = task;
   task.phase = 'fetching';
   task.startedAt = now();
@@ -479,12 +559,20 @@ async function pump() {
  * 上次没跑完的标 interrupted 并重新排队。
  */
 export async function restore() {
+  await siteConfigLoad(); // 限速覆盖要先读进来，闸门第一次推就得按它算
   let savedQueue = [];
   let hasQueueField = false;
   try {
     const st = JSON.parse(await readFile(STATE_FILE, 'utf8'));
     paused = Boolean(st.paused);
-    if (Number(st.nextOkAt) > Date.now()) nextOkAt = Number(st.nextOkAt); // 闸门持久化
+    // 闸门持久化。老档只有一个全局数字（ADR-0006 之前），铺到所有站，别让升级后立刻放行
+    if (Number(st.nextOkAt) > Date.now()) {
+      for (const p of allPacks()) gates.set(p.site, Number(st.nextOkAt));
+      gates.set('_', Number(st.nextOkAt));
+    }
+    if (st.gates && typeof st.gates === 'object') {
+      for (const [k, v] of Object.entries(st.gates)) if (Number(v) > Date.now()) gates.set(k, Number(v));
+    }
     if (Array.isArray(st.queued)) {
       savedQueue = st.queued; // 排队的是本进程的，别的进程的不许抢
       hasQueueField = true;

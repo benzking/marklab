@@ -8,12 +8,13 @@
 //
 // 下载走站点给 App 的那条通道（见 fileLinks）：不开浏览器，纯 node。
 import * as ch from '../channel.mjs';
-import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
+import { sanitize, fmtHours, str, num, iso, cookiesFor } from '../lib.mjs';
 
 const HOSTS = ['makeronline.cn'];
 const SITE = 'https://www.makeronline.cn';
-// 数据命名空间：两个域共用 `makeronline`（库目录、判重键都用它），域只在 site 字段里区分
-const PLATFORM = 'makeronline';
+// 数据命名空间：**一个域名一个键**。.cn/.com 是两套独立 id 空间（同号不同模型），
+// 共用键会让两个站的模型落进同一个库目录、撞同一个判重键。
+const PLATFORM = 'makeronline.cn';
 
 export function match(raw) {
   let u;
@@ -44,6 +45,70 @@ export async function loginState() {
   const j = await r.json().catch(() => null);
   const u = j?.data || j?.result;
   return r.ok && u?.user_name ? { ok: true, status: 'logged-in', name: u.user_display_name || u.user_name } : { ok: false, status: 'logged-out' };
+}
+
+// 服务端按 timeZone 算「今天」，不带会算错日期
+const CHECKIN_Q = 'timeZone=Asia%2FShanghai';
+
+/** 从 7 天周期里读今天签没签、第几天、当天几分。纯函数，test.mjs 有断言。 */
+export function checkinPlan(cfg) {
+  const days = Array.isArray(cfg) ? cfg : [];
+  if (!days.length) return { ready: false, signed: false, reason: '没有签到周期（限时任务没开）' };
+  const done = days.find((d) => d.is_checkin === 1);
+  if (done) return { ready: false, signed: true, day: done.key, integral: done.integral, date: done.date };
+  return { ready: true, signed: false, day: days[0].key, integral: days[0].integral };
+}
+
+/** 积分接口的鉴权头 + 统一错误处理。签到和 status() 共用。 */
+async function checkinApi() {
+  const all = await ch.cookies();
+  if (!all) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）');
+  const token = cookiesFor(all, ['makeronline.cn']).find((c) => c.name === 'mo_access_token')?.value;
+  if (!token) throw new Error('未登录：浏览器里没有 .cn 的 mo_access_token（.com 那套是另一个账号，不算）');
+  const headers = { authorization: token, lang: 'zh_CN', 'content-type': 'application/json' };
+  return async (path, opts = {}) => {
+    const r = await ch.fetchAs('makeronline.cn', `${SITE}${path}?${CHECKIN_Q}`, { headers, ...opts });
+    if (!r) throw new Error('浏览器没连上：先开着 Chromium（9223 端口）');
+    const j = await r.json().catch(() => null);
+    if (j?.code !== 0) throw new Error(`接口拒绝：${j?.message || r.status}`);
+    return j.data;
+  };
+}
+
+/** 签到：7 天一轮 1,1,1,1,2,2,2 分。必须带 Authorization，只带 cookie 读到的是匿名模板（全 0）。 */
+export async function checkin({ dry = false } = {}) {
+  const api = await checkinApi();
+  const before = checkinPlan(await api('/api/user/integral/check-in-task-config'));
+  // 形状跟 checkinStatus().checkin 完全一样：一个语义只有一种形状（site-pack.md §11.1）
+  const done = (signed, extra = {}) => ({
+    signed,
+    ...(before.day ? { streak: before.day } : {}),
+    ...(signed && Number.isFinite(num(before.integral)) ? { gain: num(before.integral) } : {}),
+    ...extra,
+  });
+  if (before.signed) return done(true);
+  if (!before.ready) return { signed: false, note: before.reason };
+  if (dry) return done(false);
+
+  await api('/api/user/integral/daily-checkin', { method: 'POST', body: '' });
+  const after = checkinPlan(await api('/api/user/integral/check-in-task-config'));
+  return done(true, after.signed ? {} : { note: '回读没看到今天的记录，站点可能改了接口' });
+}
+
+/** 积分余额 + 签到状态（控制台卡片第二行）。`streak` 是 7 天周期走到第几天，不是累计连签。 */
+export async function checkinStatus() {
+  const api = await checkinApi();
+  const plan = checkinPlan(await api('/api/user/integral/check-in-task-config'));
+  const { integral } = await api('/api/user/integral/task');
+  return {
+    ...(Number.isFinite(num(integral)) ? { points: num(integral) } : {}),
+    checkin: {
+      signed: plan.signed,
+      streak: plan.day || 0,
+      ...(plan.signed && Number.isFinite(num(plan.integral)) ? { gain: num(plan.integral) } : {}),
+      ...(plan.reason ? { note: plan.reason } : {}),
+    },
+  };
 }
 
 const rgb = (v) =>
@@ -99,7 +164,6 @@ export async function meta(url) {
 
   return {
     platform: PLATFORM,
-    site: 'cn',
     id: hit.id,
     sourceUrl: canonical,
     title: m.title,
@@ -256,7 +320,7 @@ export function normalize(raw) {
     collects: null, // 搜索接口没有收藏数
     comments: null, // 也没有评论数
     picked: Boolean(raw?.is_winner),
-    publishedAt: iso(raw?.created_time),
+    publishedAt: iso(raw?.created_at),
     tags: Array.isArray(raw?.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
   };
 }
@@ -270,7 +334,8 @@ export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const r = await fetch(`${SITE}/api/search/model`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0, order: keyword ? '' : ORDER[sort] || '' }),
+    // 带关键字时不能传 order：一传就退化成全站榜（实测「皮卡丘」1/20 标题命中 vs 20/20），
+      body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0, order: keyword ? '' : ORDER[sort] || '' }),
   });
   if (!r.ok) throw new Error(`MakerOnline HTTP ${r.status}`);
   const j = await r.json();
@@ -313,22 +378,30 @@ export function matchUser(raw) {
   return id ? { site: 'makeronline.cn', id } : null;
 }
 
-export default {
+const pack = {
   site: 'makeronline.cn',
   platform: PLATFORM,
-  aliases: ['makeronline'], // 订阅/搜索沿用历史上的 `makeronline` 键，落到国内站
+  aliases: ['makeronline'], // 历史键：旧订阅/手输的 `makeronline` 仍落到国内站
   label: 'MakerOnline.cn',
   hosts: HOSTS,
   discover: true,
-  searchKey: 'makeronline',
+  // 分类对照表的 id 空间以海外站为准（merge.json 按它建的），两域共用一张表；本站没有 categories()
+  categoriesKey: 'makeronline',
   match,
   matchUser,
   loginState,
+  checkin,
+  checkinStatus,
   meta,
   fileLinks,
+  // 有关键字时站点强制相关度，sorts 只在无关键字（逛分类）时生效
+  // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
+  searchOptions: { sorts: [], tags: false },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
@@ -339,9 +412,10 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
   console.assert(match(`https://www.makeronline.cn/zh/allModel/all/all/0.html`) === null, '列表页不是模型页');
 
   const n = normalize({ mold_id: 1, title: 'O', target_url: 'https://www.makeronline.cn/model/O/1.html' });
-  console.assert(n.site === 'makeronline' && n.id === '1', '站点名与 id');
+  console.assert(n.site === 'makeronline.cn' && n.id === '1', '数据键带域，不和 .com 撞');
   console.assert(n.collects === null && n.comments === null, '无收藏/评论');
   console.assert(n.publishedAt === null && n.tags.length === 0, '缺字段默认');
+  console.assert(normalize({ mold_id: 2, created_at: '2024-09-29 23:52:22' }).publishedAt?.startsWith('2024-09-29'), '发布时间读 created_at（接口字段名是 created_at，不是 created_time）');
 
   // 下载清单的请求形状：file_type 1=STL、2=3mf、3=文档，各带各的 id
   const jobs = downloadJobs(
@@ -357,5 +431,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
   console.assert(jobs[1].body.file_type === 1 && jobs[1].body.mold_id === 42, 'STL 用 mold_id');
   console.assert(jobs[2].body.file_type === 3 && jobs[2].kind === 'doc', '文档走 file_type 3');
 
+  console.assert(pack.searchOptions.tags === false, '搜索结果不带标签');
   console.log('makeronline.cn pack demo ok');
 }

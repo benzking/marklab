@@ -9,13 +9,15 @@
 import http from 'node:http';
 import { readFile, readdir, rm, stat, mkdir } from 'node:fs/promises';
 import { inspectFile, PREVIEW_ROOT } from './inspect.mjs';
-import { catIndex, catOf, inside, writeJson, ROOT } from './lib.mjs';
-import { match as matchSite } from './sites/index.mjs';
+import { catIndex, catOf, checkinText, inside, writeJson, ROOT } from './lib.mjs';
+import { match as matchSite, byName as packOf } from './sites/index.mjs';
 import * as tasks from './tasks.mjs';
 import * as stats from './stats.mjs';
 import * as subs from './subs.mjs';
+import * as checkinAuto from './checkin.mjs';
 import * as dup from './dup.mjs';
 import * as session from './session.mjs';
+import * as search from './search.mjs';
 import * as llm from './llm.mjs';
 import path from 'node:path';
 
@@ -36,6 +38,34 @@ const readJsonOr = async (file, fallback) => {
 };
 const CATS = await readJsonOr(path.join(ROOT, 'docs/categories/merge.json'), { level1: [] });
 const CAT_MAP = catIndex((await readJsonOr(path.join(ROOT, 'docs/categories/sites.json'), { sites: {} })).sites, CATS);
+
+// 积分/签到状态缓存 60 秒：和登录态一个口径。checkinStatus() 每站要打两三个接口，跟着轮询会打穿站点
+let statusCache = { at: 0, data: {} };
+const withTimeout = (promise, ms, what) => {
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}超时（${ms / 1000} 秒没响应）`)), ms);
+  });
+  return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
+};
+
+async function siteStatus(force = false) {
+  if (!force && Date.now() - statusCache.at < 60_000) return statusCache.data;
+  const data = {};
+  await Promise.all(
+    session.SITES.map(async ({ site }) => {
+      const pack = packOf(site);
+      if (typeof pack?.checkinStatus !== 'function') return;
+      try {
+        data[site] = await withTimeout(pack.checkinStatus(), 15_000, '积分探测');
+      } catch (e) {
+        data[site] = { note: String(e.message || e).slice(0, 120) };
+      }
+    }),
+  );
+  statusCache = { at: Date.now(), data };
+  return data;
+}
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -77,7 +107,8 @@ async function serveFile(res, file) {
 // 读一个 model.json 并补上派生字段（分类、文件是否还在盘上）
 async function hydrate(dirName, model) {
   model.dir = dirName;
-  model.cat = catOf(CAT_MAP, model.platform, model.category);
+  // 分类表的键是「分类 id 空间」不是数据键：MakerOnline 两域共用一张表（以海外站的 id 为准）
+  model.cat = catOf(CAT_MAP, packOf(model.platform)?.categoriesKey || model.platform, model.category);
   // 文件可能在磁盘上被删过，按实际存在与否标一下
   for (const f of model.savedFiles || []) {
     try {
@@ -321,8 +352,79 @@ const server = http.createServer(async (req, res) => {
       return json(res, 200, await stats.workbench(url.searchParams.get('force') === '1'));
     }
 
-    // 登录态单独一个接口：探测要开浏览器标签，几秒才回来，不能拖住首屏
-    if (p === '/api/console/login') return json(res, 200, await session.state(url.searchParams.get('force') === '1'));
+    // 站点包卡片：登录态 + 积分/签到 + 库内数据 + 限速，一次拿全，前端别串四个请求
+    if (p === '/api/console/sites') {
+      const force = url.searchParams.get('force') === '1';
+      const [logins, wb, st] = await Promise.all([session.state(force), stats.workbench(force), siteStatus(force)]);
+      const queue = tasks.state();
+      const cfg = tasks.siteConfigGet();
+      const global = tasks.gapsMs().map((ms) => ms / 1000); // 输入框的占位值：没覆盖时就是这个
+      const sites = logins.map((l) => {
+        const pack = packOf(l.site);
+        const mine = st[l.site] || {};
+        const own = cfg[l.site]?.modelGapSec;
+        const packRate = pack?.rate?.modelGapSec;
+        return {
+          site: l.site,
+          label: l.label,
+          login: l, // {ok,status,name,reason}；stale 表示这次没探到、留着上次的
+          points: mine.points ?? null,
+          checkin: mine.checkin || null,
+          note: mine.note || null,
+          models: wb.models.bySite[l.site] || 0,
+          lastFetch: wb.models.lastFetch?.[l.site] || null,
+          pending: wb.models.pending?.[l.site] || 0,
+          last24h: wb.models.last24h?.[l.site] || 0,
+          daily: wb.models.daily?.[l.site] || null, // 最近 7 个自然日各抓了多少个带 3mf 的
+          rate: {
+            modelGapSec: own || packRate || null,
+            global,
+            source: own ? 'custom' : packRate ? 'pack' : 'global',
+            searchPerMin: cfg[l.site]?.searchPerMin || null,
+            searchPerMinGlobal: search.RATE.perSite,
+          },
+          checkinAuto: Boolean(cfg[l.site]?.checkinAuto),
+          // 能力位照 site-pack.md §5：typeof 判断，不按站点名判断
+          abilities: {
+            checkin: typeof pack?.checkin === 'function',
+            checkinStatus: typeof pack?.checkinStatus === 'function',
+            categories: typeof pack?.categories === 'function',
+            userModels: typeof pack?.userModels === 'function',
+            sorts: pack?.searchOptions?.sorts ?? [], // 本站支持的搜索排序（site-pack.md §11.2）
+            tags: pack?.searchOptions?.tags === true, // 搜索结果带不带标签，订阅端据此灰掉 tag 勾选
+          },
+        };
+      });
+      return json(res, 200, {
+        at: new Date().toISOString(),
+        paused: queue.paused,
+        queued: queue.queued,
+        running: queue.running,
+        days: wb.models.days || null, // 柱状图的 7 个日期标签（最老 → 今天）
+        config: cfg, // 前端改限速时整份回传，别让它自己拼
+        sites,
+      });
+    }
+
+    // 签到：复用包里的 checkin()。checkin.mjs 那套 CLI 收尾（process.exit / forget）不能带进来
+    if (p === '/api/console/checkin' && req.method === 'POST') {
+      const { site, dry } = await readBody(req);
+      const pack = packOf(site);
+      if (typeof pack?.checkin !== 'function') return json(res, 400, { error: '这个站没有签到' });
+      try {
+        const r = await pack.checkin({ dry: Boolean(dry) });
+        statusCache.at = 0; // 签完了，卡片上的数字立刻重取
+        return json(res, 200, { ...r, text: checkinText(r, !dry) });
+      } catch (e) {
+        return json(res, 500, { error: String(e.message || e).slice(0, 200) });
+      }
+    }
+
+    // 站点自定义限速（ADR-0006）：只收 modelGapSec，别的字段一律不认
+    if (p === '/api/console/site-config') {
+      if (req.method === 'POST') return json(res, 200, await tasks.siteConfigSet(await readBody(req)));
+      return json(res, 200, tasks.siteConfigGet());
+    }
 
     if (p === '/api/console/tasks') {
       await tasks.refresh(); // 并入 bulk.mjs 这类别的进程写的任务
@@ -474,6 +576,9 @@ const server = http.createServer(async (req, res) => {
     if (p === '/api/console/subs/hits')
       return json(res, 200, await subs.hits(url.searchParams.get('id'), Number(url.searchParams.get('limit')) || 200));
 
+    // 本轮候选清单：给控制台看「搜到了什么、为什么没进队列」
+    if (p === '/api/console/subs/candidates') return json(res, 200, await subs.candidates(url.searchParams.get('id')));
+
     if (p === '/api/console/llm') {
       if (req.method === 'GET') {
         const cfg = await llm.loadConfig();
@@ -526,9 +631,10 @@ const server = http.createServer(async (req, res) => {
   }
 });
 
-// 上次没跑完的任务接着跑；订阅每分钟看一次有没有到点
+// 上次没跑完的任务接着跑；订阅每分钟看一次有没有到点；开了自动签到的站每天签一次
 const restored = await tasks.restore();
 setInterval(() => subs.tick().catch((e) => console.error('[subs]', e.message)), 60_000);
+checkinAuto.startAuto(tasks.siteConfigGet);
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`模型库  http://127.0.0.1:${PORT}/    (静态目录 ${path.relative(ROOT, LIB)}/)`);

@@ -9,7 +9,10 @@
 import * as ch from '../channel.mjs';
 import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
 
-const HOSTS = ['makerworld.com', 'makerworld.com.cn'];
+// 只认 .com.cn。makerworld.com 是**另一套 id 空间**（2026-11-02 实测：同号 1014649/195581/1309981
+// 在两域是完全不同的模型），一个包认两个域就会落进同一个库目录、同一个判重键。
+// 要接世界站就另开一个包（照 makeronline 的先例），别把它加回这里。
+const HOSTS = ['makerworld.com.cn'];
 const SITE = 'https://makerworld.com.cn';
 
 export function match(raw) {
@@ -248,7 +251,8 @@ export function normalize(raw) {
     comments: num(raw?.commentCount),
     picked: Boolean(raw?.isStaffPicked),
     publishedAt: iso(raw?.createTime),
-    tags: Array.isArray(raw?.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
+    // 搜索结果和用户页给的 tag 是对象（{name}），详情接口给的是字符串，两种都收
+    tags: Array.isArray(raw?.tags) ? raw.tags.map((t) => (typeof t === 'string' ? t : t?.name)).filter(Boolean) : [],
   };
 }
 
@@ -341,7 +345,7 @@ export async function categories() {
   }));
 }
 
-export default {
+const pack = {
   site: 'makerworld',
   platform: 'makerworld',
   label: 'MakerWorld',
@@ -354,15 +358,18 @@ export default {
   meta,
   fileLinks,
   categories,
+  searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20, tags: true },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   const id = '195581';
   console.assert(match(`https://makerworld.com.cn/zh/models/${id}`)?.id === id, '标准模型页');
-  console.assert(match(`https://makerworld.com/zh/models/${id}?from=search`)?.url === `https://makerworld.com/zh/models/${id}`, '两个域都认，重组时丢掉 query');
+  console.assert(match(`https://makerworld.com/zh/models/${id}`) === null, '.com 是另一个站的 id 空间，不认');
   console.assert(match('https://makerworld.com.cn/zh/@someone/upload') === null, '用户页不是模型页');
   console.assert(match('https://makerworld.com.cn.evil.example/zh/models/1') === null, '相似域名不认');
 
@@ -379,5 +386,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
     '预览链反推 3mf 裸链（去签名 query、换扩展名）',
   );
 
+  console.assert(pack.searchOptions.tags === true, 'MakerWorld 搜索结果带 tags');
   console.log('makerworld pack demo ok');
 }

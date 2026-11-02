@@ -1,19 +1,16 @@
 // 控制台前端：左侧导航 + 六个分页，零框架、零构建，改完刷新就见效。
 // 每个分页各自 try/catch：哪个接口挂了就只在它自己的框里显示红字，不拖白整页。
 
-const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', makeronline: 'MakerOnline' };
-const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', makeronline: '#ff7d00' };
+const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', 'makeronline.cn': 'MakerOnline 国内', 'makeronline.com': 'MakerOnline 国际' };
+const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', 'makeronline.cn': '#ff7d00', 'makeronline.com': '#ff7d00' };
 const PHASE = { queued: '排队中', fetching: '取页中', parsing: '解析中', downloading: '下载中', done: '已完成', failed: '失败', interrupted: '中断', duplicate: '重复' };
 const SOURCE = { manual: '手动', refetch: '补抓', subscribe: '订阅', bulk: '批抓' };
 const ACTIVE = new Set(['queued', 'fetching', 'parsing', 'downloading']);
-
-// 站点包能力表：改站点适配器时顺手改这里，控制台就不用猜哪站能干什么
-const SITE_PACKS = [
-  { site: 'creality', match: 'crealitycloud.cn/model-detail/<id>', meta: '__NUXT_DATA__ + fileListPage', files: 'memberDownload（要登录）', search: '匿名接口', cat: '两级分类' },
-  { site: 'makerworld', match: 'makerworld.com[.cn]/…/models/<id>', meta: 'design-service 接口', files: 'f3mf（要登录）', search: '页内读 #__NEXT_DATA__', cat: '两级分类' },
-  { site: 'snapmaker', match: 'space.snapmaker.cn/…/model/<id>', meta: 'RSC 载荷 + api-models', files: '私链 CDN（匿名）', search: '匿名接口', cat: '两级分类' },
-  { site: 'makeronline', match: 'makeronline.com|.cn/…/<id>.html', meta: '__NUXT__ IIFE', files: '页面点下载（要登录）', search: '匿名接口', cat: '两级分类' },
-];
+// 搜索排序键 → 人话（键的并集见 sites/contract.mjs SORTS）
+const SORT_LABEL = { downloads: '按下载', likes: '按点赞', collects: '按收藏', newest: '按最新', hot: '按热门', score: '按评分' };
+const sortName = (s) => SORT_LABEL[s] || s || '默认序';
+const MATCH_LABEL = { name: '按名字', tag: '按标签' };
+const DECISION = { queued: '已入队', 'no-match': '名字没命中', threshold: '没过门槛', 'in-library': '库里已有', 'in-queue': '已在队列' };
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
@@ -57,7 +54,8 @@ const siteOfUrl = (url) => {
   if (/crealitycloud\.cn/.test(u)) return 'creality';
   if (/makerworld\.com/.test(u)) return 'makerworld';
   if (/snapmaker\.cn/.test(u)) return 'snapmaker';
-  if (/makeronline\.(com|cn)/.test(u)) return 'makeronline';
+  if (/makeronline\.com/.test(u)) return 'makeronline.com';
+  if (/makeronline\.cn/.test(u)) return 'makeronline.cn';
   return null;
 };
 const siteDot = (s) => `<i class="sd" style="background:${SITE_COLOR[s] || '#c8ccd4'}"></i>`;
@@ -160,7 +158,7 @@ function renderWorkbench(w) {
   const health = w.health || {};
   const t = w.tasks || {};
 
-  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline']
+  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn']
     .map((s) => `<div class="kv"><em>${siteDot(s)}${siteName(s)}</em><b>${fmtNum(by[s])}</b></div>`)
     .join('');
 
@@ -408,18 +406,33 @@ const stopTask = (id, btn) => taskAction(id, btn, '/api/console/tasks/stop', '�
 let subsData = [];
 let selectedSub = null;
 let detailHits = null; // { id, rows }
+let detailCands = null; // { id, items }，候选清单是台账，跟命中记录分开缓存
 
 function thresholdText(s) {
+  if (s.kind === 'author') return '作者订阅：他发的全下';
   const parts = [];
   if (Number(s.minLikes) > 0) parts.push(`点赞 ≥ ${fmtNum(s.minLikes)}`);
   if (Number(s.minDownloads) > 0) parts.push(`下载 ≥ ${fmtNum(s.minDownloads)}`);
   if (s.pickedOnly) parts.push('只要精选');
-  if (s.excludeInLibrary) parts.push('排除已入库');
-  parts.push(s.sort === 'newest' ? '按发布时间' : '按下载 + 点赞');
-  parts.push(`每站 ${fmtNum(s.pageLimit || 1)} 页`);
-  parts.push(`每轮最多 ${fmtNum(s.roundLimit || 50)} 个`);
-  parts.push(`每 ${s.intervalHours || 8} 小时`);
-  return parts.join(' · ');
+  return parts.length ? parts.join(' · ') : '无门槛';
+}
+
+/** 作者订阅的翻页游标：首次全量没翻完就从这页接着翻，翻完才走增量。 */
+function authorCursorText(s) {
+  const cur = s.authorCursor || {};
+  const keys = Object.keys(cur);
+  if (!keys.length) return '还没跑过';
+  return keys
+    .map((k) => {
+      const i = k.indexOf(':');
+      const site = k.slice(0, i);
+      const id = k.slice(i + 1);
+      const u = (s.users || []).find((x) => x.site === site && x.id === id);
+      const c = cur[k] || {};
+      const page = c.done ? '首次全量已翻完' : `第 ${fmtNum(c.page || 1)} 页`;
+      return `${siteName(site)} ${u?.name || id} ${page}`;
+    })
+    .join(' · ');
 }
 
 function lastResultText(s) {
@@ -465,11 +478,16 @@ function renderSubDetail() {
     box.innerHTML = '<p class="muted small">左边点一条订阅看详情，或点右上角新建。</p>';
     return;
   }
-  const sites = (s.sites || []).map(siteName).join('、') || '—';
+  const author = s.kind === 'author';
   const kws = (s.keywords || []).join('、');
   const users = (s.users || []).map((u) => `${siteName(u.site)} ${u.name || u.id}`).join('、');
+  const rules = (s.rules || [])
+    .map((r) => `<span class="tag">${esc(siteName(r.site))} · ${esc(sortName(r.sort))} · 前 ${fmtNum(r.limit)} 条</span>`)
+    .join(' ');
+  const modes = (s.matchModes || []).map((m) => MATCH_LABEL[m] || m).join('、');
   const prog = s.progress ? `<div class="sub-line">正在跑：${esc(s.progress.site || '')} · ${esc(s.progress.kw || '')} · 已搜 ${fmtNum(s.progress.searched)}/${fmtNum(s.progress.planned)}</div>` : '';
   const hits = detailHits && detailHits.id === s.id ? detailHits.rows : null;
+  const cands = detailCands && detailCands.id === s.id ? detailCands.items : null;
   box.innerHTML = `
     <div class="detail-head">
       <h2>${esc(s.name || s.id)}</h2>
@@ -480,16 +498,60 @@ function renderSubDetail() {
         <button class="btn sm danger" data-del="${esc(s.id)}" type="button">删除</button>
       </div>
     </div>
+    <div class="kvline"><em>类型</em>${author ? '作者订阅（他发的全下）' : '关键字订阅'}</div>
     <div class="kvline"><em>状态</em><span class="tag ${s.enabled ? 'ok' : ''}">${s.enabled ? '启用' : '停用'}</span></div>
-    <div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>
-    <div class="kvline"><em>用户</em>${users ? esc(users) : '—'}</div>
-    <div class="kvline"><em>站点</em>${esc(sites)}</div>
+    ${author ? '' : `<div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>`}
+    ${author ? `<div class="kvline"><em>作者</em>${users ? esc(users) : '—'}</div>` : ''}
+    ${author ? '' : `<div class="kvline"><em>规则</em>${rules || '—'}</div>`}
+    ${author ? '' : `<div class="kvline"><em>匹配</em>${esc(modes || '—')}</div>`}
     <div class="kvline"><em>门槛</em>${esc(thresholdText(s))}</div>
+    ${author ? `<div class="kvline"><em>游标</em>${esc(authorCursorText(s))}</div>` : ''}
+    <div class="kvline"><em>间隔</em>每 ${s.intervalHours || 8} 小时</div>
     <div class="kvline"><em>上次</em>${s.lastRunAt ? fmtTime(s.lastRunAt) : '还没跑过'} · ${esc(lastResultText(s))}</div>
     ${prog}
+    ${
+      author
+        ? ''
+        : `<h3 class="sub-h">本轮候选 <span class="muted small">这是本轮搜到的全部候选，最后一列是它为什么没进抓取队列</span></h3>
+    <div class="cands">${cands === null ? '<p class="muted small">加载中…</p>' : cands.length ? candTable(cands) : '<p class="muted small">还没跑过</p>'}</div>`
+    }
     <h3 class="sub-h">命中记录</h3>
     <div class="hits">${hits === null ? '<p class="muted small">加载中…</p>' : hits.length ? hits.map(hitRow).join('') : '<p class="muted small">还没有命中</p>'}</div>`;
   if (!hits) loadHits(s.id);
+  if (!author && !cands) loadCandidates(s.id);
+}
+
+async function loadCandidates(id) {
+  try {
+    const r = await api(`/api/console/subs/candidates?id=${encodeURIComponent(id)}`);
+    detailCands = { id, items: Array.isArray(r?.items) ? r.items : [] };
+  } catch (e) {
+    detailCands = { id, items: [] };
+    fail('#subs-err', e);
+  }
+  if (selectedSub === id) renderSubDetail();
+}
+
+function candTable(items) {
+  return `<div class="tablewrap"><table>
+    <thead><tr><th>标题</th><th>站点</th><th>名次</th><th>来源词</th><th>为什么没进队列</th></tr></thead>
+    <tbody>${items.map(candRow).join('')}</tbody>
+  </table></div>`;
+}
+
+function candRow(c) {
+  const sources = c.sources || [];
+  const src = sources[0] || {};
+  const sites = [...new Set(sources.map((x) => x.site))].map(siteName).join('、');
+  const kws = [...new Set(sources.map((x) => x.kw).filter(Boolean))].join('、');
+  const label = DECISION[c.decision] || c.decision || '—';
+  return `<tr>
+    <td><a class="tt" href="${esc(src.url || '')}" target="_blank" rel="noreferrer" title="${esc(c.title)}">${esc(c.title || c.key)}</a></td>
+    <td>${src.site ? siteDot(src.site) + esc(sites) : '—'}</td>
+    <td>${src.rank != null ? fmtNum(src.rank) : '—'}</td>
+    <td>${kws ? esc(kws) : '—'}</td>
+    <td><span class="tag ${c.decision === 'queued' ? 'ok' : ''} cand-decision">${esc(label)}</span></td>
+  </tr>`;
 }
 
 async function loadHits(id) {
@@ -612,32 +674,82 @@ async function delSub(id, btn) {
 }
 
 // ── 新建 / 编辑订阅（同一个表单）────────────────────────────────
-const SUB_FIELDS = ['name', 'keywords', 'users', 'minLikes', 'minDownloads', 'sort', 'pageLimit', 'roundLimit', 'intervalHours', 'pickedOnly', 'excludeInLibrary', 'enabled'];
+const RULE_LIMIT = 20; // 站点搜索一页 20 条（site-pack.md），新规则默认取一页
 
-function openSubForm(sub) {
+const sitesList = () => (sitesData && Array.isArray(sitesData.sites) ? sitesData.sites : []);
+// 后端存的就是原样链接（subs.mjs cleanUsers），这里不再自己拼站点模板
+const userUrl = (u) => u.url || '';
+const abilitiesOf = (site) => sitesList().find((s) => s.site === site)?.abilities || {};
+
+/** 一条候选规则：站点 + 排序 + 前 N 条 + 删。排序项只列该站 abilities.sorts 里有的。 */
+function ruleRow(rule = {}) {
+  const row = document.createElement('div');
+  row.className = 'rule-row';
+  const site = rule.site || sitesList()[0]?.site || '';
+  row.innerHTML = `
+    <select class="r-site">${sitesList()
+      .map((s) => `<option value="${esc(s.site)}"${s.site === site ? ' selected' : ''}>${esc(siteName(s.site))}</option>`)
+      .join('')}</select>
+    <select class="r-sort"></select>
+    <input class="r-limit" type="number" min="1" max="1000" step="1" value="${Math.max(1, Math.round(Number(rule.limit) || RULE_LIMIT))}"> 条
+    <button class="btn sm" type="button" data-del-rule>删</button>
+    <span class="r-hint"></span>`;
+  $('#rule-rows').appendChild(row);
+  fillSort(row, rule.sort);
+  return row;
+}
+
+/** 站点换了就重排排序项；站点不带标签时在行尾说一句（tag 勾了也只按名字判）。 */
+function fillSort(row, want) {
+  const ab = abilitiesOf(row.querySelector('.r-site').value);
+  const sorts = Array.isArray(ab.sorts) ? ab.sorts : [];
+  const sel = row.querySelector('.r-sort');
+  sel.innerHTML = sorts.length
+    ? sorts.map((k) => `<option value="${esc(k)}">${esc(sortName(k))}</option>`).join('')
+    : '<option value="">默认序</option>';
+  sel.value = sorts.includes(want) ? want : sorts[0] || '';
+  row.querySelector('.r-hint').textContent = ab.tags === false ? '该站不带标签' : '';
+}
+
+function applyKind() {
+  const kind = $('#f-kind').value;
+  for (const el of document.querySelectorAll('#sub-form [data-kind]')) el.hidden = el.dataset.kind !== kind;
+}
+
+async function openSubForm(sub) {
   const f = $('#sub-form');
   f.hidden = false;
   f.reset();
+  if (!sitesData) await loadSites(); // 规则行的站点/排序来自站点包能力位
   $('#f-id').value = sub ? sub.id : '';
   $('#sub-submit').textContent = sub ? '保存修改' : '新建订阅';
+  $('#f-kind').value = sub?.kind || 'keyword';
+  applyKind();
+  $('#rule-rows').innerHTML = '';
+  for (const rule of sub?.rules?.length ? sub.rules : [{}]) ruleRow(rule);
+  const modes = sub ? sub.matchModes || [] : ['name'];
+  for (const box of f.querySelectorAll('input[name="match"]')) box.checked = modes.includes(box.value);
   if (sub) {
     $('#f-name').value = sub.name || '';
     $('#f-kw').value = (sub.keywords || []).join(', ');
-    $('#f-users').value = (sub.users || []).map((u) => u.url || '').filter(Boolean).join('\n');
+    $('#f-users').value = (sub.users || []).map(userUrl).filter(Boolean).join('\n');
     $('#f-likes').value = sub.minLikes || 0;
     $('#f-dl').value = sub.minDownloads || 0;
-    $('#f-sort').value = sub.sort || 'downloads';
-    $('#f-pages').value = sub.pageLimit || 1;
-    $('#f-round').value = sub.roundLimit || 50;
     $('#f-int').value = sub.intervalHours || 8;
     f.elements.pickedOnly.checked = Boolean(sub.pickedOnly);
-    f.elements.excludeInLibrary.checked = Boolean(sub.excludeInLibrary);
     f.elements.enabled.checked = sub.enabled !== false;
-    for (const box of f.querySelectorAll('input[name="site"]')) {
-      box.checked = (sub.sites || []).includes(box.value);
-    }
   }
   f.scrollIntoView({ block: 'nearest' });
+}
+
+function formRules(f) {
+  return [...f.querySelectorAll('#rule-rows .rule-row')]
+    .map((row) => ({
+      site: row.querySelector('.r-site').value,
+      sort: row.querySelector('.r-sort').value || null,
+      limit: Math.max(1, Math.round(Number(row.querySelector('.r-limit').value) || RULE_LIMIT)),
+    }))
+    .filter((r) => r.site);
 }
 
 async function submitSub(e) {
@@ -645,32 +757,35 @@ async function submitSub(e) {
   const f = e.target;
   const el = (n) => f.elements[n];
   const id = $('#f-id').value;
-  const keywords = String(el('keywords').value || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
-  const users = String(el('users').value || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
-  const sites = [...f.querySelectorAll('input[name="site"]:checked')].map((i) => i.value);
-  if (!keywords.length && !users.length) {
-    flash('#sub-note', '至少填一个关键字或一个用户主页', true);
-    return;
+  const kind = el('kind').value;
+  const name = String(el('name').value || '').trim();
+  const intervalHours = Number(el('intervalHours').value) || 8;
+  const enabled = el('enabled').checked;
+  let body;
+  if (kind === 'author') {
+    const users = String(el('users').value || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
+    if (!users.length) return flash('#sub-note', '作者订阅至少填一个作者主页链接', true);
+    body = { name: name || '作者订阅', kind, users, intervalHours, enabled };
+  } else {
+    const keywords = String(el('keywords').value || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+    const rules = formRules(f);
+    const matchModes = [...f.querySelectorAll('input[name="match"]:checked')].map((i) => i.value);
+    if (!keywords.length) return flash('#sub-note', '关键字订阅至少填一个关键字', true);
+    if (!rules.length) return flash('#sub-note', '关键字订阅至少要一条候选规则（站点 + 排序 + 前 N 条）', true);
+    if (!matchModes.length) return flash('#sub-note', '至少勾一种匹配方式（按名字 / 按标签）', true);
+    body = {
+      name: name || keywords[0],
+      kind,
+      keywords,
+      rules,
+      matchModes,
+      minLikes: Number(el('minLikes').value) || 0,
+      minDownloads: Number(el('minDownloads').value) || 0,
+      pickedOnly: el('pickedOnly').checked,
+      intervalHours,
+      enabled,
+    };
   }
-  if (keywords.length && !sites.length) {
-    flash('#sub-note', '关键字订阅要勾至少一个站点', true);
-    return;
-  }
-  const body = {
-    name: String(el('name').value || '').trim() || keywords[0] || users[0],
-    keywords,
-    users,
-    sites,
-    minLikes: Number(el('minLikes').value) || 0,
-    minDownloads: Number(el('minDownloads').value) || 0,
-    pickedOnly: el('pickedOnly').checked,
-    excludeInLibrary: el('excludeInLibrary').checked,
-    sort: el('sort').value,
-    pageLimit: Number(el('pageLimit').value) || 1,
-    roundLimit: Number(el('roundLimit').value) || 50,
-    intervalHours: Number(el('intervalHours').value) || 8,
-    enabled: el('enabled').checked,
-  };
   const btn = $('#sub-submit');
   btn.disabled = true;
   try {
@@ -721,30 +836,79 @@ async function loadEvents() {
 
 // ── 站点包 ────────────────────────────────────────────────────
 let loginRows = [];
+let sitesData = null; // /api/console/sites 的原样响应：卡片、登录态列表、限速设置都读它
 
 function renderSites() {
-  const by = (wbData && wbData.models && wbData.models.bySite) || {};
-  const state = new Map(loginRows.map((r) => [r.site, r]));
-  $('#site-cards').innerHTML = SITE_PACKS.map((p) => {
-    const r = state.get(p.site);
-    const login = !r
-      ? '<span class="muted small">未检测</span>'
-      : r.ok
-        ? `<span class="ok">✓ ${esc(r.name || '已登录')}</span>`
-        : r.status === 'unknown'
-          ? '<span class="unk">无法检测</span>'
-          : '<span class="bad">✗ 未登录</span>';
-    return `<div class="site-card">
-      <div class="site-head">${siteDot(p.site)}<b>${esc(siteName(p.site))}</b>
-        <span class="muted small">库内 ${fmtNum(by[p.site])}</span></div>
-      <div class="kvline"><em>链接</em><code>${esc(p.match)}</code></div>
-      <div class="kvline"><em>元数据</em>${esc(p.meta)}</div>
-      <div class="kvline"><em>文件</em>${esc(p.files)}</div>
-      <div class="kvline"><em>搜索</em>${esc(p.search)}</div>
-      <div class="kvline"><em>分类</em>${esc(p.cat)}</div>
-      <div class="kvline"><em>登录态</em>${login}</div>
-    </div>`;
-  }).join('');
+  const rows = sitesData && Array.isArray(sitesData.sites) ? sitesData.sites : [];
+  if (!rows.length) {
+    $('#site-cards').innerHTML = '<p class="muted small">加载中…</p>';
+    return;
+  }
+  const days = (sitesData && sitesData.days) || [];
+  $('#site-cards').innerHTML = rows
+    .map((r) => {
+      const l = r.login || {};
+      // 第一行右侧：红绿灯 + 账号名。unknown 是灰灯——「不知道」不是「没登录」
+      const light = l.ok ? 'ok' : l.status === 'unknown' ? 'unk' : 'bad';
+      const name = l.ok ? esc(l.name || '已登录') : l.status === 'unknown' ? '无法检测' : '未登录';
+      const head = `<div class="site-head">${siteDot(r.site)}<b>${esc(r.label || siteName(r.site))}</b>
+        <span class="login-tag" title="${esc(l.reason || '')}"><i class="light ${light}"></i>${name}</span></div>`;
+
+      // 第二行：积分 + 签到 + 连签；右边自动签到开关（包里没 checkin 的站不给开关）
+      const c = r.checkin || null;
+      const bits = [];
+      if (r.points != null) bits.push(`<span><em>积分</em>${fmtNum(r.points)}</span>`);
+      if (c) {
+        bits.push(
+          c.signed
+            ? `<span class="ok">今日已签${c.gain ? ` +${c.gain}` : ''}</span>`
+            : '<span class="bad">今日未签</span>',
+        );
+        if (c.streak) bits.push(`<span><em>连签</em>${c.streak} 天</span>`);
+      } else if (r.note) {
+        bits.push(`<span class="muted small">${esc(r.note)}</span>`);
+      }
+      const canCheckin = r.abilities && r.abilities.checkin;
+      const toggle = canCheckin
+        ? `<label class="auto-in"><input type="checkbox" data-auto="${esc(r.site)}"${r.checkinAuto ? ' checked' : ''}>自动签到</label>`
+        : '';
+      const checkinRow = `<div class="kvline">${bits.join('<i class="sep">·</i>') || '<span class="muted small">这个站没有签到</span>'}${
+        c && !c.signed && canCheckin ? `<button class="btn sm" type="button" data-checkin="${esc(r.site)}">签到</button>` : ''
+      }${toggle}</div>`;
+
+      // 第三行：库内 + 最近 24 小时 + 待补抓
+      const libRow = `<div class="kvline">
+        <span><em>库内</em>${fmtNum(r.models)} 个</span><i class="sep">·</i>
+        <span><em>最近 1 天</em>抓 ${fmtNum(r.last24h || 0)} 个</span>${
+          r.pending > 0 ? `<i class="sep">·</i><span><em>待补抓</em><span class="bad">${fmtNum(r.pending)}</span></span>` : ''
+        }</div>`;
+
+      // 第四行：最近 7 个自然日（含今天）带 3mf 的入库数。柱高按本卡最大值归一，别跨站比
+      const daily = Array.isArray(r.daily) ? r.daily : [];
+      const peak = Math.max(1, ...daily);
+      const bars = daily.length
+        ? `<div class="bars">${daily
+            .map(
+              (n, i) =>
+                `<i style="height:${Math.max(2, Math.round((n / peak) * 100))}%" title="${esc(days[i] || '')}：${n} 个"></i>`,
+            )
+            .join('')}</div><div class="bars-x">${days.map((d) => `<span>${esc(d)}</span>`).join('')}</div>`
+        : '<span class="muted small">还没有数据</span>';
+      const chartRow = `<div class="kvline chart"><em>近 7 天</em><div class="chart-body">${bars}</div></div>`;
+
+      // 第五行：两个限速，改完离开输入框就存，没有保存按钮
+      const rate = r.rate || {};
+      const gap = (rate.global || [60, 120]).join('-');
+      const own = rate.modelGapSec ? rate.modelGapSec.join('-') : '';
+      const perMin = rate.searchPerMin ? String(rate.searchPerMin) : '';
+      const rateRow = `<div class="kvline">
+        <em>下载限速</em><input class="rate-in" type="text" data-gap="${esc(r.site)}" value="${esc(own)}" placeholder="${esc(gap)}" inputmode="numeric"><span class="muted small">秒</span>
+        <em class="ml">搜索限速</em><input class="rate-in" type="text" data-permin="${esc(r.site)}" value="${esc(perMin)}" placeholder="${esc(String(rate.searchPerMinGlobal || 4))}" inputmode="numeric"><span class="muted small">次/分</span>
+      </div>`;
+
+      return `<div class="site-card">${head}${checkinRow}${libRow}${chartRow}${rateRow}</div>`;
+    })
+    .join('');
 }
 
 // 批量动作：后端早就有了，界面以前没有入口
@@ -815,13 +979,72 @@ async function loadSites(force = false) {
   clearFail('#login-err');
   if (force) $('#login-note').textContent = '正在打开浏览器标签探测…';
   try {
-    renderLogin(await api(`/api/console/login${force ? '?force=1' : ''}`));
-    $('#login-note').textContent = `检测于 ${fmtTime(new Date().toISOString())}`;
+    sitesData = await api(`/api/console/sites${force ? '?force=1' : ''}`);
+    renderLogin((sitesData.sites || []).map((s) => s.login || { site: s.site, label: s.label }));
+    renderSites();
+    $('#login-note').textContent = `检测于 ${fmtTime(sitesData.at)}`;
   } catch (e) {
     fail('#login-err', e);
   }
-  if (!wbData) loadWorkbench();
-  else renderSites();
+}
+
+/** 卡片上的签到按钮：走包的 checkin()，回来重取一遍卡片。 */
+async function cardAction(btn) {
+  const site = btn.dataset.checkin;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/console/checkin', { method: 'POST', body: { site } });
+    await loadSites();
+    $('#login-note').textContent = `${siteName(site)}：${r.text || '已签到'}`;
+  } catch (e) {
+    fail('#login-err', e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** 合并一处改动进站点配置再整份回传（后端只认 modelGapSec / searchPerMin / checkinAuto）。
+ *  null 表示「这一项跟随全局」，合并时删掉这个键。 */
+async function saveSite(site, patch) {
+  const cfg = { ...(sitesData.config || {}) };
+  const mine = { ...(cfg[site] || {}), ...patch };
+  for (const k of Object.keys(mine)) if (mine[k] == null) delete mine[k];
+  if (Object.keys(mine).length) cfg[site] = mine;
+  else delete cfg[site];
+  sitesData.config = await api('/api/console/site-config', { method: 'POST', body: cfg });
+  await loadSites();
+}
+
+/** 限速输入框：change = 失焦或回车，改完直接存，没有保存按钮。留空 = 跟随全局。 */
+async function saveRate(el) {
+  const site = el.dataset.gap || el.dataset.permin;
+  const raw = String(el.value || '').trim();
+  const patch = {};
+  try {
+    if (el.dataset.gap) {
+      const nums = raw ? raw.split(/[-~到\s]+/).map(Number).filter((n) => Number.isFinite(n)) : [];
+      if (raw && nums.length !== 2) throw new Error('下载限速写两个数，像 90-150（秒）');
+      patch.modelGapSec = nums.length === 2 ? nums : null;
+    } else {
+      const n = raw ? Number(raw) : NaN;
+      if (raw && !(Number.isFinite(n) && n > 0)) throw new Error('搜索限速写个正整数，像 4（次/分）');
+      patch.searchPerMin = Number.isFinite(n) && n > 0 ? n : null;
+    }
+    await saveSite(site, patch);
+  } catch (e) {
+    await loadSites(); // 先打回服务器上的值，别让错的数字留在框里
+    fail('#login-err', e); // 再报错：loadSites 开头会清空错误框
+  }
+}
+
+/** 自动签到开关。 */
+async function saveAuto(el) {
+  try {
+    await saveSite(el.dataset.auto, { checkinAuto: el.checked });
+  } catch (e) {
+    await loadSites();
+    fail('#login-err', e);
+  }
 }
 
 // ── 设置：大模型打标签 ────────────────────────────────────────
@@ -909,6 +1132,7 @@ document.addEventListener('click', (e) => {
   if (pick) {
     selectedSub = pick.dataset.pick;
     detailHits = null;
+    detailCands = null;
     renderSubs();
     return;
   }
@@ -928,6 +1152,7 @@ document.addEventListener('click', (e) => {
   if (t.id === 'sub-stop-all') return toggleAllSubs(t);
   if (t.dataset.toggle) return toggleSub(t.dataset.toggle, t);
   if (t.id === 'sub-cancel') { $('#sub-form').hidden = true; return; }
+  if (t.dataset.checkin) return cardAction(t);
   if (t.dataset.retry) return retryTask(t.dataset.retry, t);
   if (t.dataset.promote) return promoteTask(t.dataset.promote, t);
   if (t.dataset.stop) return stopTask(t.dataset.stop, t);
@@ -942,6 +1167,14 @@ document.addEventListener('click', (e) => {
   }
 });
 
+// 站点包卡片：输入框改完就存，开关一拨就存
+$('#site-cards').addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t.dataset) return;
+  if (t.dataset.gap || t.dataset.permin) return saveRate(t);
+  if (t.dataset.auto) return saveAuto(t);
+});
+
 // 任务行是 <tr>，键盘要能展开：Enter / 空格当成点击
 $('#task-rows').addEventListener('keydown', (e) => {
   if (e.key !== 'Enter' && e.key !== ' ') return;
@@ -953,6 +1186,20 @@ $('#task-rows').addEventListener('keydown', (e) => {
 $('#login-recheck').addEventListener('click', () => loadSites(true));
 $('#refresh').addEventListener('click', () => reloadAll());
 $('#sub-form').addEventListener('submit', submitSub);
+$('#f-kind').addEventListener('change', applyKind);
+$('#rule-add').addEventListener('click', () => ruleRow({}));
+$('#rule-rows').addEventListener('change', (e) => {
+  if (e.target.classList.contains('r-site')) fillSort(e.target.closest('.rule-row'));
+});
+$('#rule-rows').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-del-rule]');
+  if (!btn) return;
+  if ($('#rule-rows').querySelectorAll('.rule-row').length <= 1) {
+    flash('#sub-note', '关键字订阅至少留一条规则', true);
+    return;
+  }
+  btn.closest('.rule-row').remove();
+});
 $('#llm-save').addEventListener('click', saveLlm);
 $('#llm-models').addEventListener('click', fetchModels);
 window.addEventListener('hashchange', route);

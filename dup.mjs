@@ -4,6 +4,7 @@
 // 只有字节完全一样才会撞上同一个 hash，所以 3mf 只可能和 3mf 撞、stl 只可能和 stl 撞。
 // 命中不入库，只记 data/duplicates.json；library/ 一个字节都不改（AGENTS.md）。
 import { readdir, readFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import path from 'node:path';
 import { writeJson, ROOT, LIB } from './lib.mjs';
 
@@ -37,9 +38,11 @@ let idx = null;
 /** 扫 library/ 建索引。600 个模型 ~150ms，不落盘。libDir 只给测试用。 */
 export async function index(force = false, libDir = LIB) {
   if (idx && !force && libDir === LIB) return idx;
-  const byMeta = new Map(); // metaKey -> [{ key, at }]，按入库时间升序
+  const byMeta = new Map(); // metaKey -> [{ key, at, files }]，按入库时间升序
   const hashes = new Map(); // "site:id" -> Set<sha256>
-  const keys = new Set(); // 已入库的全部 "site:id"，订阅用来排除已入库
+  // 「已入库」= 目录里真有模型文件。只建了 model.json 没下到文件的（登录失败、站点没给文件）
+  // 不算入库：它得能再被抓一次，否则订阅永远跳过它、判重永远拦它。
+  const keys = new Set();
   // 库还没建（全新安装 / 临时根）就当空库，别让订阅第一轮就崩
   const entries = await readdir(libDir, { withFileTypes: true }).catch(() => []);
   for (const entry of entries) {
@@ -51,12 +54,13 @@ export async function index(force = false, libDir = LIB) {
       continue;
     }
     const key = `${m.platform}:${m.id}`;
-    keys.add(key);
+    const files = (m.savedFiles || []).length;
+    if (files) keys.add(key);
     const at = Date.parse(m.fetchedAt) || 0;
     const mk = metaKey(m.title, m.author);
     if (mk) {
       const arr = byMeta.get(mk) || [];
-      arr.push({ key, at });
+      arr.push({ key, at, files });
       byMeta.set(mk, arr);
     }
     const hs = authorHashes(m.savedFiles);
@@ -65,6 +69,28 @@ export async function index(force = false, libDir = LIB) {
   for (const arr of byMeta.values()) arr.sort((a, b) => a.at - b.at);
   idx = { byMeta, hashes, keys };
   return idx;
+}
+
+/**
+ * 订阅查库用：只读候选自己那个目录，不扫全库、不建索引。
+ * 形状与 index().keys 一致（有 has），一轮里同一个 key 只读一次盘。
+ * 订阅一轮几十上百条候选，每条一次 readFileSync 是毫秒级；扫全库才是白花时间。
+ */
+export function libChecker(libDir = LIB) {
+  const memo = new Map();
+  return {
+    has(key) {
+      if (!memo.has(key)) {
+        let ok = false;
+        try {
+          const m = JSON.parse(readFileSync(path.join(libDir, String(key).replace(':', '-'), 'model.json'), 'utf8'));
+          ok = (m.savedFiles || []).length > 0;
+        } catch {}
+        memo.set(key, ok);
+      }
+      return memo.get(key);
+    },
+  };
 }
 
 /**
@@ -81,6 +107,7 @@ export async function check(model, libDir = LIB) {
   let cross = null;
   for (const hit of byMeta.get(metaKey(model.title, model.author)) || []) {
     if (hit.key === self) continue;
+    if (!hit.files) continue; // 没下到文件的那条不算已入库，别拦着它重抓
     if (hit.key.startsWith(`${model.platform}:`)) return { of: hit.key, by: 'meta', same: true };
     cross ||= { of: hit.key, by: 'meta', same: false };
   }

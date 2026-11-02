@@ -89,56 +89,50 @@
           <label for="f-name">名称</label>
           <input id="f-name" name="name" type="text" placeholder="如：可动关节">
         </div>
-        <div class="field wide">
+        <div class="field wide" data-kind="keyword">
           <label for="f-kw">关键字（逗号分隔）</label>
           <input id="f-kw" name="keywords" type="text" placeholder="如：头盔, 可动关节, 收纳盒">
         </div>
-        <div class="field wide">
-          <label for="f-users">用户主页（每行一个链接，订阅该作者的全部模型）</label>
+        <div class="field wide" data-kind="author" hidden>
+          <label for="f-users">作者主页（每行一个链接）</label>
           <textarea id="f-users" name="users" rows="2" placeholder="https://makerworld.com.cn/zh/@youngzhen&#10;https://space.snapmaker.cn/zh/creator/11307"></textarea>
         </div>
-        <div class="field wide">
-          <label>站点</label>
+        <div class="field">
+          <label for="f-kind">类型</label>
+          <select id="f-kind" name="kind">
+            <option value="keyword">关键字订阅（搜索 + 匹配）</option>
+            <option value="author">作者订阅（他发的全下）</option>
+          </select>
+        </div>
+        <div class="field wide" data-kind="keyword">
+          <label>候选规则（站点 + 排序 + 前 N 条，每条规则搜一遍）</label>
+          <div id="rule-rows"></div>
+          <button class="btn sm" type="button" id="rule-add">加一条规则</button>
+        </div>
+        <div class="field wide" data-kind="keyword">
+          <label>匹配方式（任一命中就算）</label>
           <div class="checks">
-            <label><input type="checkbox" name="site" value="creality" checked>创想云</label>
-            <label><input type="checkbox" name="site" value="makerworld" checked>MakerWorld</label>
-            <label><input type="checkbox" name="site" value="snapmaker" checked>Snapmaker</label>
-            <label><input type="checkbox" name="site" value="makeronline" checked>MakerOnline</label>
+            <label><input type="checkbox" name="match" value="name" checked>按名字（标题含关键字）</label>
+            <label><input type="checkbox" name="match" value="tag">按标签（只有 MakerWorld 带标签）</label>
           </div>
         </div>
-        <div class="field">
+        <div class="field" data-kind="keyword">
           <label for="f-likes">点赞数 ≥</label>
           <input id="f-likes" name="minLikes" type="number" min="0" step="1" value="0">
         </div>
-        <div class="field">
+        <div class="field" data-kind="keyword">
           <label for="f-dl">下载量 ≥</label>
           <input id="f-dl" name="minDownloads" type="number" min="0" step="1" value="0">
         </div>
-        <div class="field">
-          <label for="f-sort">排序</label>
-          <select id="f-sort" name="sort">
-            <option value="downloads">按下载 + 点赞</option>
-            <option value="newest">按发布时间</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="f-pages">每个关键字/作者翻几页</label>
-          <input id="f-pages" name="pageLimit" type="number" min="1" max="10" step="1" value="1">
-        </div>
-        <div class="field">
-          <label for="f-round">每轮最多入库</label>
-          <input id="f-round" name="roundLimit" type="number" min="1" max="200" step="1" value="50">
+        <div class="field" data-kind="keyword">
+          <label>门槛条件</label>
+          <div class="checks">
+            <label><input type="checkbox" name="pickedOnly">只要精选</label>
+          </div>
         </div>
         <div class="field">
           <label for="f-int">每几小时跑一次</label>
           <input id="f-int" name="intervalHours" type="number" min="0.5" step="0.5" value="8">
-        </div>
-        <div class="field">
-          <label>门槛条件</label>
-          <div class="checks">
-            <label><input type="checkbox" name="pickedOnly">只要精选</label>
-            <label><input type="checkbox" name="excludeInLibrary" checked>排除已入库</label>
-          </div>
         </div>
         <div class="field">
           <label>启用</label>
@@ -174,7 +168,7 @@
         <h1>站点包</h1>
         <div class="right">
           <span class="muted small" id="login-note"></span>
-          <button class="btn sm" id="login-recheck" type="button">重新检测登录态</button>
+          <button class="btn sm" id="login-recheck" type="button">登录状态刷新</button>
         </div>
       </div>
       <div class="err" id="login-err" hidden></div>

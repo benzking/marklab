@@ -17,7 +17,7 @@ const OUT = path.join(ROOT, 'docs/categories/sites.json');
 const out = { fetchedAt: new Date().toISOString(), sites: {} };
 const tableOnly = process.argv.includes('--table');
 // 分类 id 空间是「一个站一份」：MakerOnline 两域各有一套 id，对照表以海外站为准（categoriesKey）
-for (const pack of tableOnly ? [] : sites.all().filter((p) => p.categoriesKey)) {
+for (const pack of tableOnly ? [] : sites.all().filter((p) => p.categoriesKey && p.categories)) {
   const name = pack.categoriesKey;
   try {
     out.sites[name] = await pack.categories();
