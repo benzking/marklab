@@ -2,7 +2,7 @@
 
 > 这份文件说「系统应该怎样」；`README.md` 说「现在怎么用」；
 > **`docs/site-pack.md` 说「站点包必须有什么」**（那一块以它为准，本文只管需求）；
-> `docs/adr/` 说「为什么这么定」。`docs/architecture.md` 已作废，别照它写。
+> `docs/adr/` 说「为什么这么定」。
 > 其余冲突时以本文件为准，然后改其它几份。
 > 术语一律照 `GLOSSARY.md`，不另造词。
 >
@@ -800,3 +800,11 @@ queued → fetching → parsing → downloading → done
 - `data/` 什么时候该上 sqlite（现在文件够用，过 5000 个模型再说）。
 - 服务是否改绑 `127.0.0.1`（用户当前决定：**不改**；代价是上面第 1、2 条的入口在局域网内可用）。
 - MakerOnline 若必须放弃 `__NUXT__` 求值，是换接口还是退到「只抓元数据、不抓文件」。
+- **要不要把匿名 HTTP 收成一个池**（原 `docs/architecture.md` §4.1 的 `net.mjs`）：统一超时、
+  状态码检查、最多 3 次退避重试、`Content-Length` 校验、流式落盘同时算 sha256。现在这些散在
+  `grab.mjs` 与各站点包里各写一遍；没做是因为四个站的文件下载路径差别大，先按站各自实现更省事。
+- **要不要事件流**（原 §7）：每个子系统一个 `data/events/<kind>-YYYY-MM.jsonl`，公共信封
+  `{ts, kind, ms, attempt, ok, msg, lane, dir, url}`，用来事后查「这个模型为什么没下下来」。
+  现在靠 `data/tasks/` 与日志，够用但不可聚合查询。
+- **要不要把原子写单独拆成 `store.mjs`**（原 §6）：现在 `lib.mjs` 的 `writeJson` 已经是
+  tmp + rename，只是没 `fsync`、临时名不带 pid（两个进程同时写会撞）。等真出现并发写再拆。
