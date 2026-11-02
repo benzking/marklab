@@ -38,7 +38,7 @@
 | `categoriesKey` | ✅ | 分类 id 空间的键，不是数据键 |
 | `aliases` | ⬜ | 历史键 → 本包（`makeronline` → `.cn`）。只在入口认，返回一律用规范键 |
 | `loginOnly` | ⬜ | 必须登录的接口路径前缀，给 `authneed.mjs` 的升级链用 |
-| `searchOptions` | ⬜ | 本站能怎么搜：支持的排序键、页大小是否固定（§11.2）。**不写 = 只支持默认序** |
+| `searchOptions` | ⬜ | 本站能怎么搜：支持的排序键、页大小、带不带标签（§11.2）。**不写 = 只支持默认序、不带标签** |
 | `rate` | ⬜ | 本站固有的模型间隔 `{modelGapSec: [最小, 最大]}`，秒（§6） |
 
 ## 3. 必需成员（5 个，缺一个包就不成立）
@@ -187,13 +187,16 @@
 ```js
 searchOptions: {
   sorts: ['downloads', 'likes', 'collects', 'newest'], // 有序：第一项 = 该站默认序；[] = 本站不支持排序
+  tags: false,                                         // 必填：搜索结果带不带标签
   pageSize: 20,                                        // 可选：站点页大小固定时写死，调用方别指望改
 }
 ```
 
 - 排序键并集（`contract.mjs` 的 `SORTS`）：`downloads` / `likes` / `collects` / `newest` / `hot` / `score`。
   新增键先加进并集，再用。
-- **不写 `searchOptions` = 只支持默认序**，等价于 `sorts: []`。
+- **`tags` 必填**：本站搜索结果是否自带标签。没有标签就写 `false`——订阅端据此灰掉 tag 勾选框
+  （`docs/spec.md` §6.2），不许靠猜。站点只给译名（Snapmaker 的 `translatedTags`）时由包自己归到 `tags`。
+- **不写 `searchOptions` = 只支持默认序、不带标签**，等价于 `sorts: []` + `tags: false`。
 - **回落是公共层的事**：`search.mjs` 收到本站 `sorts` 里没有的键，换成 `sorts[0]`
   （空数组就不带 sort），并把实际用的 `sort` 放回返回值，调用方和日志都看得见。
   包里的 `SORT[sort] || 默认` 只当第二道保险，不承担语义。
@@ -210,6 +213,7 @@ searchOptions: {
 | `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ |
 | `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ |
 | `searchOptions.sorts` | downloads, likes, collects, newest | downloads, likes, newest, hot, score | downloads, likes, collects, newest | downloads, likes, newest | downloads, likes, newest |
+| `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ |
 | 页大小固定 | 否 | **20** | 否 | 否 | 否 |
 | `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ |
 | `categories` | ✓ | ✓ | ✓ | ✗ | ✓ |

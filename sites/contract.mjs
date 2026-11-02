@@ -53,9 +53,9 @@ export const isCheckin = (c) => !!c && typeof c.signed === 'boolean' && c.text =
 /** checkinStatus() 的返回。 */
 export const isCheckinStatus = (s) => !!s && (s.points === undefined || isNum(s.points)) && (s.checkin === undefined || isCheckin(s.checkin));
 
-/** searchOptions：本站支持哪些排序、页大小是否固定。 */
+/** searchOptions：本站支持哪些排序、页大小是否固定、搜索结果带不带标签。 */
 export const isSearchOptions = (o) =>
-  !!o && Array.isArray(o.sorts) && o.sorts.every((s) => SORTS.includes(s)) && new Set(o.sorts).size === o.sorts.length && (o.pageSize === undefined || (Number.isInteger(o.pageSize) && o.pageSize > 0));
+  !!o && Array.isArray(o.sorts) && o.sorts.every((s) => SORTS.includes(s)) && new Set(o.sorts).size === o.sorts.length && typeof o.tags === 'boolean' && (o.pageSize === undefined || (Number.isInteger(o.pageSize) && o.pageSize > 0));
 
 /** 一个包的形状对不对：返回问题列表，空数组就是全对。 */
 export function checkPack(p) {
