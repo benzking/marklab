@@ -11,6 +11,9 @@ import { fileURLToPath } from 'node:url';
 import { autoTags, catIndex, catOf, cookiesFor, inside, noFilesKind, resolveNuxt, sanitize, slugify } from './lib.mjs';
 import * as sitePacks from './sites/index.mjs';
 
+// 当前检出的仓库根：子进程与 -e 代码都用它，别写死主仓库路径（worktree 里才测得到自己）
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
 // 站点识别搬进站点包了（票 06）。这里留一层薄壳，老断言不用改：包里叫 site，这里叫 name。
 const matchPlatform = (u) => {
   const h = sitePacks.match(u);
@@ -374,7 +377,7 @@ test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () =
   await writeFile(path.join(lib, 'm-1', 'model.json'), JSON.stringify({ platform: 'creality', id: 'aaa', title: 'Benchy 小船', author: 'Tom' }));
   const child = await new Promise((res, rej) => {
     const cp = spawn(process.execPath, ['-e', `
-      import { ROOT } from '/home/gly/marklab/lib.mjs';
+      import { ROOT } from '${HERE}/lib.mjs';
       process.stdout.write(ROOT);
     `], { env: { ...process.env, MARKLAB_ROOT: base } });
     let out = ''; cp.stdout.on('data', (d) => (out += d)); cp.on('error', rej); cp.on('close', () => res(out));
@@ -386,7 +389,7 @@ test('MARKLAB_ROOT 缝：根目录可注入，临时根里跑判重', async () =
 // 起一个独立 node 进程跑一段代码（模块级状态互不干扰），返回它的 stdout
 async function runNode(code, extraEnv = {}) {
   const cp = spawn(process.execPath, ['-e', code], {
-    cwd: '/home/gly/marklab',
+    cwd: HERE,
     env: { ...process.env, ...extraEnv },
   });
   let out = '';
@@ -415,7 +418,7 @@ async function runTasks(code, base) {
 test('入队去重：同一网址排着/在跑/24 小时内完成过的不重复排队', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-queue-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     const url = 'https://space.snapmaker.cn/zh/model/1021-model';
     const a = tasks.enqueue({ url, source: 'bulk' });
     const b = tasks.enqueue({ url, source: 'bulk' });   // 在排 = 去重
@@ -438,7 +441,7 @@ test('入队去重：同一网址排着/在跑/24 小时内完成过的不重复
 test('restore 只恢复本进程排队名单，jsonl 里别的进程排队的不抢', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-restore-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     import { mkdir, writeFile, appendFile } from 'node:fs/promises';
     import path from 'node:path';
     import { fileURLToPath } from 'node:url';
@@ -450,7 +453,7 @@ test('restore 只恢复本进程排队名单，jsonl 里别的进程排队的不
     const month = path.join(process.env.MARKLAB_ROOT, 'data', 'tasks', new Date().toISOString().slice(0, 7) + '.jsonl');
     await appendFile(month, JSON.stringify({ id: 't-other', url: 'https://space.snapmaker.cn/zh/model/1022-model', phase: 'queued', createdAt: new Date().toISOString() }) + '\\n');
     // 重新进一个全新模块实例，模拟重启：restore 只应把 queue.json 里那一条捞回来
-    const again = await import('/home/gly/marklab/tasks.mjs?restore=' + Date.now());
+    const again = await import('${HERE}/tasks.mjs?restore=' + Date.now());
     const r = await again.restore();
     const list = again.list();
     const tOther = list.find((t) => t.id === 't-other');
@@ -469,7 +472,7 @@ test('restore 只恢复本进程排队名单，jsonl 里别的进程排队的不
 test('闸门持久化：finish 后 nextOkAt 写进 queue.json，restore 读回', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-gate-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     import { readFile } from 'node:fs/promises';
     import path from 'node:path';
     const url = 'https://space.snapmaker.cn/zh/model/1022-model';
@@ -491,7 +494,7 @@ test('闸门持久化：finish 后 nextOkAt 写进 queue.json，restore 读回',
 test('暂停中手动入队只放行这一条，paused 不动，队列里其余一条不跑', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-force-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     import { readFile } from 'node:fs/promises';
     import path from 'node:path';
     const u = (n) => 'https://space.snapmaker.cn/zh/model/' + n + '-x';
@@ -524,7 +527,7 @@ test('暂停中手动入队只放行这一条，paused 不动，队列里其余�
 test('闸门按站独立：一个站跑完只推它自己的，自定义间隔压不到 60 秒地板以下', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-gate-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     await tasks.siteConfigLoad();
     const saved = await tasks.siteConfigSet({ creality: { modelGapSec: [10, 10] }, snapmaker: { modelGapSec: [90, 100] } });
     const A = 'https://www.crealitycloud.cn/model-detail/' + '1'.padStart(24, '0');
@@ -545,7 +548,7 @@ test('闸门按站独立：一个站跑完只推它自己的，自定义间隔�
 test('每站一条队轮转：一个站积压不挡别的站出队', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-lane-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     const A = (n) => 'https://www.crealitycloud.cn/model-detail/' + String(n).padStart(24, '0');
     const B = (n) => 'https://space.snapmaker.cn/zh/model/' + n + '-x';
     // 暂停着排完四条再放行：模拟一批积压，轮转顺序才是确定的
@@ -571,7 +574,7 @@ test('每站一条队轮转：一个站积压不挡别的站出队', async () =>
 test('失败过的网址能重抓，成功过的 24 小时内不重排', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-retry-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     import { mkdir, appendFile } from 'node:fs/promises';
     import path from 'node:path';
     const url = 'https://space.snapmaker.cn/zh/model/1021-model';
@@ -581,7 +584,7 @@ test('失败过的网址能重抓，成功过的 24 小时内不重排', async (
     const month = path.join(process.env.MARKLAB_ROOT, 'data', 'tasks', new Date().toISOString().slice(0, 7) + '.jsonl');
     const old = { id: 't-old', url: failedUrl, site: 'snapmaker', phase: 'failed', rounds: 3, createdAt: new Date().toISOString(), endedAt: new Date().toISOString(), ok: false, progress: { done: 0, total: 0, name: '' } };
     await appendFile(month, JSON.stringify(old) + '\\n');
-    const again = await import('/home/gly/marklab/tasks.mjs?r=' + Date.now());
+    const again = await import('${HERE}/tasks.mjs?r=' + Date.now());
     await again.restore();
     const a = again.enqueue({ url, source: 'bulk' });
     for (let i = 0; i < 60 && again.queueDepth(); i++) await new Promise((r) => setTimeout(r, 30));
@@ -606,7 +609,7 @@ test('失败过的网址能重抓，成功过的 24 小时内不重排', async (
 test('人点停止是 stopped 终态：不计失败、rounds 不动', async () => {
   const base = await mkdtemp(path.join(os.tmpdir(), 'ml-stop-'));
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     const url = 'https://space.snapmaker.cn/zh/model/1021-model';
     // 暂停着排，它就停在队里，这时点停止
     tasks.pause();
@@ -633,7 +636,7 @@ test('子进程挂死：先 SIGTERM 让它收尾，5 秒后 SIGKILL，任务记�
     'process.on("SIGTERM", () => {});\nsetInterval(() => {}, 1000);\n',
   );
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     const a = tasks.enqueue({ url: 'https://space.snapmaker.cn/zh/model/1021-model', source: 'bulk' });
     // 只看第一轮：被杀了就说明 SIGTERM→SIGKILL 这条路通了，后面的重排不用等
     let t = tasks.get(a.task.id);
@@ -713,7 +716,7 @@ process.exit(1);
 `,
   );
   const code = `
-    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    import * as tasks from '${HERE}/tasks.mjs';
     const a = tasks.enqueue({ url: 'https://space.snapmaker.cn/zh/model/1021-model', source: 'bulk' });
     let t = tasks.get(a.task.id);
     for (let i = 0; i < 100 && !t.error; i++) {
@@ -782,8 +785,8 @@ async function runSubs(code, prep) {
 
 test('订阅：搜索失败要记进 lastResult.error，不能当成「搜到 0 条」', async () => {
   const { out, err } = await runSubs(`
-    import * as sites from '/home/gly/marklab/sites/index.mjs';
-    import * as subs from '/home/gly/marklab/subs.mjs';
+    import * as sites from '${HERE}/sites/index.mjs';
+    import * as subs from '${HERE}/subs.mjs';
     sites.registerForTest({
       site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
       match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
@@ -804,8 +807,8 @@ test('订阅：搜索失败要记进 lastResult.error，不能当成「搜到 0 
 
 test('订阅：一轮跑不完就记「跑到第 N 个」，下一轮从 N 接着跑', async () => {
   const { out } = await runSubs(`
-    import * as sites from '/home/gly/marklab/sites/index.mjs';
-    import * as subs from '/home/gly/marklab/subs.mjs';
+    import * as sites from '${HERE}/sites/index.mjs';
+    import * as subs from '${HERE}/subs.mjs';
     const seen = [];
     sites.registerForTest({
       site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
@@ -834,8 +837,8 @@ test('订阅：一轮跑不完就记「跑到第 N 个」，下一轮从 N 接�
 
 test('订阅：连点两次「立即跑」不会并发打站点', async () => {
   const { out } = await runSubs(`
-    import * as sites from '/home/gly/marklab/sites/index.mjs';
-    import * as subs from '/home/gly/marklab/subs.mjs';
+    import * as sites from '${HERE}/sites/index.mjs';
+    import * as subs from '${HERE}/subs.mjs';
     let inflight = 0;
     let peak = 0;
     sites.registerForTest({
@@ -953,7 +956,7 @@ test('签到文案由公共层拼：包只给字段，人话在 checkinText', as
 test('五个站点包的自检都要能跑过（match/normalize 回归）', async () => {
   for (const f of ['creality', 'makerworld', 'snapmaker', 'makeronline-cn', 'makeronline-com']) {
     const r = await new Promise((res) => {
-      const cp = spawn(process.execPath, [`sites/${f}.mjs`], { cwd: '/home/gly/marklab' });
+      const cp = spawn(process.execPath, [`sites/${f}.mjs`], { cwd: HERE });
       let err = '';
       cp.stderr.on('data', (d) => (err += d));
       cp.on('close', (code) => res({ code, err }));
