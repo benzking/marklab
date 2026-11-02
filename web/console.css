@@ -244,11 +244,35 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
 .log-detail { display: block; margin-top: 2px; }
 
 /* ── 站点包 ─────────────────────────────────────────────── */
-.sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
-.site-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 14px; }
-.site-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.sites { display: grid; grid-template-columns: repeat(auto-fill, minmax(358px, 1fr)); gap: 12px; }
+.site-card { background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.site-head { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; flex-wrap: wrap; }
 .site-head b { font-size: 14.5px; }
-.site-head .muted { margin-left: auto; }
+.site-card .kvline { align-items: center; flex-wrap: wrap; }
+.site-card .kvline em { min-width: auto; }
+.site-card .kvline .sep { font-style: normal; color: var(--line); margin: 0 6px; }
+.site-card .kvline .ml { margin-left: 10px; }
+.site-card .kvline em { margin-right: 6px; }
+.site-card .kvline .btn { margin-left: auto; }
+/* 第一行右侧：红绿灯 + 账号名 */
+.login-tag { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; }
+.light { width: 8px; height: 8px; border-radius: 50%; flex: none; background: #c8ccd4; }
+.light.ok { background: #22a06b; }
+.light.bad { background: #e5484d; }
+.light.unk { background: #c8ccd4; }
+/* 自动签到开关 */
+.auto-in { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; color: var(--dim); cursor: pointer; }
+.auto-in input { margin: 0; cursor: pointer; }
+/* 近 7 天柱状图：柱高按本卡最大值归一 */
+.kvline.chart { align-items: flex-start; }
+.chart-body { flex: 1; min-width: 0; }
+.bars { display: flex; align-items: flex-end; gap: 3px; height: 34px; }
+.bars i { flex: 1; background: var(--accent); opacity: .7; border-radius: 2px 2px 0 0; min-height: 2px; }
+.bars-x { display: flex; gap: 3px; margin-top: 3px; }
+.bars-x span { flex: 1; text-align: center; font-size: 9.5px; color: var(--dim); }
+/* 限速输入：窄到不抢眼，但能写 90-150 */
+.rate-in { width: 66px; padding: 3px 4px; border: 1px solid var(--line); border-radius: 6px; font: inherit; font-size: 12.5px; text-align: center; }
+.rate-in:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
 
 /* ── 任务行内展开 ───────────────────────────────────────── */
 .task-row { cursor: pointer; }
@@ -302,3 +326,11 @@ button.sub-item {
   outline: 2px solid #2f6df6;
   outline-offset: -2px;
 }
+
+/* 候选规则行：站点 + 排序 + 前 N 条 + 删除，一行一条 */
+.rule-row { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }
+.rule-row select, .rule-row input { font-size: 13px; padding: 5px 8px; border: 1px solid #cfd4dd; border-radius: 7px; background: #fff; }
+.rule-row input { width: 84px; }
+.rule-row .r-hint { font-size: 12.5px; color: #8a91a0; }
+.rule-row select:disabled, .rule-row input:disabled { background: #f3f4f7; color: #a6acb8; }
+.cand-decision { font-size: 12px; }

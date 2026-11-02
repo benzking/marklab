@@ -8,7 +8,7 @@ import makeronlineCom from './makeronline-com.mjs';
 
 // 顺序 = 控制台里的显示顺序
 const PACKS = [creality, makerworld, snapmaker, makeronlineCn, makeronlineCom];
-// aliases 让「搜索/订阅沿用旧键」和「.cn/.com 共用一个数据命名空间」都能落到同一个包上
+// aliases 让「搜索/订阅沿用历史键」落到同一个包上（数据键一个域名一个，不共用）
 const BY_NAME = new Map(PACKS.flatMap((p) => [p.site, ...(p.aliases || [])].map((k) => [k, p])));
 
 export const all = () => PACKS;

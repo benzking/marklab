@@ -2,6 +2,7 @@
 // 两个能力：① 拿登录态（cookie 只在内存里）② 用真浏览器取页（MakerWorld 只能走这条）。
 import { chromium } from 'playwright-core';
 import path from 'node:path';
+import { cookiesFor } from './lib.mjs';
 
 const CDP = process.env.MARKLAB_CDP || 'http://127.0.0.1:9223';
 const COOKIE_TTL = 300_000; // 登录态内存缓存 5 分钟；401 时强制重取
@@ -139,8 +140,7 @@ async function rawCookieHeader(site, force = false) {
   const all = await rawCookies(force);
   if (!all) return null;
   const domains = DOMAINS[site] || [];
-  // 只认同域或子域：`endsWith(d)` 会让 evil-makeronline.cn 也混进来
-  const mine = all.filter((c) => domains.some((d) => c.domain === d || c.domain === '.' + d || c.domain.endsWith('.' + d)));
+  const mine = cookiesFor(all, domains);
   return mine.map((c) => `${c.name}=${c.value}`).join('; ');
 }
 
@@ -254,13 +254,20 @@ async function rawClosePages() {
 }
 
 export function forget() {
+  // 重连前先把旧页关掉：只清 Map 不关页，每刷一次登录态就往用户 Chrome 里多留一排窗口
+  for (const p of pages.values()) p.close({ runBeforeUnload: false }).catch(() => {});
+  pages.clear();
   browser = null;
   cookiesCache = null;
-  pages.clear();
 }
 
-// 注意：playwright 的 WS 会撑住事件循环，脚本用完要自己 process.exit(0)。
-// server.mjs 是常驻进程，不用管。
+/** 脚本退出的统一出口：先关掉本进程开的标签页，再退（最多等 3 秒）。
+ *  playwright 的 WS 会撑住事件循环，所以调用方要 `await exit()`——这个 Promise 故意永不 resolve，
+ *  否则后面的代码会继续跑（曾因此写出幽灵模型）。 */
+export const exit = (code = 0) =>
+  Promise.race([closePages(), new Promise((r) => setTimeout(r, 3000))])
+    .catch(() => {}) // 关标签页失败也照退，不然会在这里打转
+    .then(() => new Promise(() => process.stdout.write('', () => process.exit(code))));
 
 // 自检：不联网，只验 cookie 头拼接与站点过滤。真连浏览器在 `node channel.mjs --live`。
 function demo() {
@@ -268,12 +275,11 @@ function demo() {
     { name: 'a', value: '1', domain: '.crealitycloud.cn' },
     { name: 'b', value: '2', domain: 'makerworld.com' },
     { name: 'c', value: '3', domain: '.makeronline.cn' },
+    { name: 'evil', value: 'x', domain: 'evil-makeronline.cn' },
   ];
-  const pick = (site) => {
-    const ds = DOMAINS[site];
-    return all.filter((x) => ds.some((d) => x.domain === d || x.domain === '.' + d || x.domain.endsWith(d)));
-  };
+  const pick = (site) => cookiesFor(all, DOMAINS[site]);
   console.assert(pick('creality').length === 1, 'creality 应只收自己域');
+  console.assert(pick('makeronline.cn').length === 1, 'evil-makeronline.cn 不许混进来');
   console.assert(pick('makerworld')[0].name === 'b', 'makerworld 命中');
   console.assert(pick('makeronline.cn')[0].name === 'c', 'makeronline 命中');
   console.assert(pick('snapmaker').length === 0, '没登录的站返回空');

@@ -24,7 +24,7 @@ export async function probe(site) {
   try {
     return { site, label: pack.label, ...(await withTimeout(pack.loginState(), TIMEOUT_MS)) };
   } catch (e) {
-    return { site, label: pack.label, ok: false, status: 'unknown', reason: String(e.message || e).slice(0, 120) };
+    return { site, label: pack.label, ok: false, status: 'unknown', reason: String(e?.message || e || '未知错误').slice(0, 120) };
   }
 }
 
@@ -65,5 +65,5 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'session.mjs') {
     const mark = r.ok ? '✓' : r.status === 'unknown' ? '?' : '✗';
     console.log(`${mark} ${r.label.padEnd(14)} ${r.ok ? r.name : r.reason || r.status}`);
   }
-  process.exit(0);
+  await ch.exit(0);
 }

@@ -122,7 +122,11 @@ setsid nohup node bulk.mjs --loop 6h --limit 50 > logs/bulk.log 2>&1 < /dev/null
 - **订阅任务**：左边清单、右边详情两栏。详情里有门槛、上次结果、命中记录，可直接
   立即跑一轮 / 编辑 / 删除；新建和编辑用同一个表单。
 - **运行日志**：抓取队列、订阅命中、智能标签、判重四类事件**合成一条时间轴**，顶部标签筛选。
-- **站点包**：每个站的链接规则、元数据来源、文件接口、搜索方式、分类能力，加上登录态。
+- **站点包**：每个站一张卡片——红绿灯登录态与账号名、积分、今日签到得分与连签天数、
+  自动签到开关（未签才给签到按钮）、库内模型数 + 最近 1 天抓了几个 + 待补抓、
+  近 7 天入库柱状图（只数带 3mf 的），以及这个站的下载限速与搜索频率
+  （改完失焦就存，留空跟随全局，60 秒地板压不下去）。
+  顶上的「登录状态刷新」现取一遍，用完即弃，不落盘。
   现在有五个包（创想云 / MakerWorld / Snapmaker / MakerOnline 国内站 / MakerOnline 海外站）——
   MakerOnline 的两个域名是两套独立系统，各自成包，互不 import。
 - **设置**：大模型打标签的 baseUrl / apiKey / model，以及待确认的新词。
@@ -174,6 +178,9 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 ## 已知边界
 
 - MakerOnline 的国内站与国际站是**两套登录态**：`.cn` 登录了不代表 `.com` 登录了，工具会按各自域名打开页面。
+- **一个站点包只认一个域名**：`.cn` / `.com` 是两套独立 id 空间（同号是不同模型，实测 makerworld 三例），
+  数据键（库目录、判重键）就是域名：`makeronline.cn` / `makeronline.com`。
+  `makerworld.com`（世界站）**还没接**，贴它的链接会被当成不认识的站——要接就另开一个包，别加进现有 HOSTS。
 - 创想云 / MakerWorld / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。例外：MakerWorld 走 CDN 裸链的那部分 3mf 匿名就能下，只要求浏览器连着（design JSON 还得在页内取）。
 - **MakerWorld 没有「按机型」的单独 3mf**：`?machine=N2S / O1C2` 返回的还是同一个文件（同名同大小同 URL），
   机型只是一张兼容列表。A1 / H2C 在详情页当页签展示，不再尝试下三份。

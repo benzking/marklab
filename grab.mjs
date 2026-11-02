@@ -12,7 +12,7 @@ import { existsSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import path from 'node:path';
 import { ROOT, sanitize, slugify, autoTags, writeJson, noFilesKind } from './lib.mjs';
-import { connectionState, fetchAs, closePages, forget } from './channel.mjs';
+import { connectionState, fetchAs, exit, forget } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
@@ -37,13 +37,6 @@ const outRoot = path.resolve(ROOT, valueOf('--out') || 'library');
 const wantFiles = !args.includes('--no-files');
 
 // 结构化进度：只有任务队列（server/tasks.mjs）要，手工跑不加噪音
-// playwright 的 WS 会撑住事件循环，抓完必须自己退；先等 stdout 冲干净再退，否则日志会被截断
-// 退出前先关掉自己开的标签页（不关就会在用户 Chrome 里越堆越多），最多等 3 秒
-// 这个 Promise 故意永不 resolve：调用方必须 await，否则后面的代码会继续跑（曾因此写出幽灵模型）
-const exit = (code = 0) =>
-  Promise.race([closePages(), new Promise((r) => setTimeout(r, 3000))])
-    .catch(() => {}) // 关标签页失败也照退，不然会在这里打转
-    .then(() => new Promise(() => process.stdout.write('', () => process.exit(code))));
 
 // 错误分类：控制台要显示「下一步该干什么」，不是一坨堆栈（spec §10.1）
 const ERR_TEXT = {

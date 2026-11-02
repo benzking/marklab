@@ -144,6 +144,24 @@ export const safeDecode = (s) => {
 };
 
 export const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
+// cookie 域匹配：只认同域或子域。写成 `c.domain.endsWith(h)` 会让 evil-crealitycloud.cn 混进来。
+export const cookiesFor = (cookies, domains) =>
+  (cookies || []).filter((c) =>
+    domains.some((d) => c.domain === d || c.domain === `.${d}` || c.domain.endsWith(`.${d}`)),
+  );
+/**
+ * 签到结果（CheckinResult）→ 一行中文。文案只在这里，站点包不许拼句子（site-pack.md §11.1）。
+ * acted = 这一次真的发了签到请求（不是 dry 探状态）。
+ */
+export const checkinText = (r, acted = false) => {
+  if (!r) return '没拿到签到状态';
+  const bits = [acted && r.signed ? '签到成功' : r.signed ? '今天已签' : '可签'];
+  if (r.streak) bits.push(`连签 ${r.streak} 天`);
+  if (r.signed && r.gain) bits.push(`+${r.gain}`);
+  if (r.note) bits.push(r.note);
+  return bits.join(' · ');
+};
+
 export const num = (v) => (Number.isFinite(Number(v)) ? Number(v) : 0);
 export const iso = (v) => {
   if (!v) return null;
@@ -153,7 +171,7 @@ export const iso = (v) => {
 
 // 「热门」门槛：按各站体量定的经验值，觉得不合适直接改这里。
 // 为什么不用榜单接口：三站的榜单都要登录或没有公开接口，用下载量做相对热度更稳。
-export const HOT = { creality: 1000, makerworld: 500, snapmaker: 30, makeronline: 100 };
+export const HOT = { creality: 1000, makerworld: 500, snapmaker: 30, 'makeronline.cn': 100 };
 
 // 站点自带的「精选」标记 + 下载量过门槛 → 自动标签
 export function autoTags(platform, { downloads, picked } = {}) {
@@ -192,10 +210,9 @@ export function catIndex(sites, merge) {
 }
 
 export function catOf(map, platform, category) {
-  const site = platform === 'makeronline-cn' ? 'makeronline' : platform;
   // MakerOnline 存的是「一级 / 二级」，最后一段才是分类名
   const parts = String(category || '').split(' / ').filter(Boolean);
-  const hits = map[site]?.[parts.at(-1)] || [];
+  const hits = map[platform]?.[parts.at(-1)] || [];
   if (hits.length === 1) return { l1: hits[0].l1, l2: hits[0].l2 };
   const one = hits.find((h) => h.parent === parts[0]);
   return one ? { l1: one.l1, l2: one.l2 } : null;

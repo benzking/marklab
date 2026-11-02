@@ -1,19 +1,11 @@
 // 控制台前端：左侧导航 + 六个分页，零框架、零构建，改完刷新就见效。
 // 每个分页各自 try/catch：哪个接口挂了就只在它自己的框里显示红字，不拖白整页。
 
-const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', makeronline: 'MakerOnline' };
-const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', makeronline: '#ff7d00' };
+const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', 'makeronline.cn': 'MakerOnline 国内', 'makeronline.com': 'MakerOnline 国际' };
+const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', 'makeronline.cn': '#ff7d00', 'makeronline.com': '#ff7d00' };
 const PHASE = { queued: '排队中', fetching: '取页中', parsing: '解析中', downloading: '下载中', done: '已完成', failed: '失败', interrupted: '中断', duplicate: '重复' };
 const SOURCE = { manual: '手动', refetch: '补抓', subscribe: '订阅', bulk: '批抓' };
 const ACTIVE = new Set(['queued', 'fetching', 'parsing', 'downloading']);
-
-// 站点包能力表：改站点适配器时顺手改这里，控制台就不用猜哪站能干什么
-const SITE_PACKS = [
-  { site: 'creality', match: 'crealitycloud.cn/model-detail/<id>', meta: '__NUXT_DATA__ + fileListPage', files: 'memberDownload（要登录）', search: '匿名接口', cat: '两级分类' },
-  { site: 'makerworld', match: 'makerworld.com[.cn]/…/models/<id>', meta: 'design-service 接口', files: 'f3mf（要登录）', search: '页内读 #__NEXT_DATA__', cat: '两级分类' },
-  { site: 'snapmaker', match: 'space.snapmaker.cn/…/model/<id>', meta: 'RSC 载荷 + api-models', files: '私链 CDN（匿名）', search: '匿名接口', cat: '两级分类' },
-  { site: 'makeronline', match: 'makeronline.com|.cn/…/<id>.html', meta: '__NUXT__ IIFE', files: '页面点下载（要登录）', search: '匿名接口', cat: '两级分类' },
-];
 
 const $ = (sel) => document.querySelector(sel);
 const esc = (s) =>
@@ -57,7 +49,8 @@ const siteOfUrl = (url) => {
   if (/crealitycloud\.cn/.test(u)) return 'creality';
   if (/makerworld\.com/.test(u)) return 'makerworld';
   if (/snapmaker\.cn/.test(u)) return 'snapmaker';
-  if (/makeronline\.(com|cn)/.test(u)) return 'makeronline';
+  if (/makeronline\.com/.test(u)) return 'makeronline.com';
+  if (/makeronline\.cn/.test(u)) return 'makeronline.cn';
   return null;
 };
 const siteDot = (s) => `<i class="sd" style="background:${SITE_COLOR[s] || '#c8ccd4'}"></i>`;
@@ -160,7 +153,7 @@ function renderWorkbench(w) {
   const health = w.health || {};
   const t = w.tasks || {};
 
-  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline']
+  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn']
     .map((s) => `<div class="kv"><em>${siteDot(s)}${siteName(s)}</em><b>${fmtNum(by[s])}</b></div>`)
     .join('');
 
@@ -414,7 +407,6 @@ function thresholdText(s) {
   if (Number(s.minLikes) > 0) parts.push(`点赞 ≥ ${fmtNum(s.minLikes)}`);
   if (Number(s.minDownloads) > 0) parts.push(`下载 ≥ ${fmtNum(s.minDownloads)}`);
   if (s.pickedOnly) parts.push('只要精选');
-  if (s.excludeInLibrary) parts.push('排除已入库');
   parts.push(s.sort === 'newest' ? '按发布时间' : '按下载 + 点赞');
   parts.push(`每站 ${fmtNum(s.pageLimit || 1)} 页`);
   parts.push(`每轮最多 ${fmtNum(s.roundLimit || 50)} 个`);
@@ -612,7 +604,7 @@ async function delSub(id, btn) {
 }
 
 // ── 新建 / 编辑订阅（同一个表单）────────────────────────────────
-const SUB_FIELDS = ['name', 'keywords', 'users', 'minLikes', 'minDownloads', 'sort', 'pageLimit', 'roundLimit', 'intervalHours', 'pickedOnly', 'excludeInLibrary', 'enabled'];
+const SUB_FIELDS = ['name', 'keywords', 'users', 'minLikes', 'minDownloads', 'sort', 'pageLimit', 'roundLimit', 'intervalHours', 'pickedOnly', 'enabled'];
 
 function openSubForm(sub) {
   const f = $('#sub-form');
@@ -631,7 +623,6 @@ function openSubForm(sub) {
     $('#f-round').value = sub.roundLimit || 50;
     $('#f-int').value = sub.intervalHours || 8;
     f.elements.pickedOnly.checked = Boolean(sub.pickedOnly);
-    f.elements.excludeInLibrary.checked = Boolean(sub.excludeInLibrary);
     f.elements.enabled.checked = sub.enabled !== false;
     for (const box of f.querySelectorAll('input[name="site"]')) {
       box.checked = (sub.sites || []).includes(box.value);
@@ -664,7 +655,6 @@ async function submitSub(e) {
     minLikes: Number(el('minLikes').value) || 0,
     minDownloads: Number(el('minDownloads').value) || 0,
     pickedOnly: el('pickedOnly').checked,
-    excludeInLibrary: el('excludeInLibrary').checked,
     sort: el('sort').value,
     pageLimit: Number(el('pageLimit').value) || 1,
     roundLimit: Number(el('roundLimit').value) || 50,
@@ -721,30 +711,79 @@ async function loadEvents() {
 
 // ── 站点包 ────────────────────────────────────────────────────
 let loginRows = [];
+let sitesData = null; // /api/console/sites 的原样响应：卡片、登录态列表、限速设置都读它
 
 function renderSites() {
-  const by = (wbData && wbData.models && wbData.models.bySite) || {};
-  const state = new Map(loginRows.map((r) => [r.site, r]));
-  $('#site-cards').innerHTML = SITE_PACKS.map((p) => {
-    const r = state.get(p.site);
-    const login = !r
-      ? '<span class="muted small">未检测</span>'
-      : r.ok
-        ? `<span class="ok">✓ ${esc(r.name || '已登录')}</span>`
-        : r.status === 'unknown'
-          ? '<span class="unk">无法检测</span>'
-          : '<span class="bad">✗ 未登录</span>';
-    return `<div class="site-card">
-      <div class="site-head">${siteDot(p.site)}<b>${esc(siteName(p.site))}</b>
-        <span class="muted small">库内 ${fmtNum(by[p.site])}</span></div>
-      <div class="kvline"><em>链接</em><code>${esc(p.match)}</code></div>
-      <div class="kvline"><em>元数据</em>${esc(p.meta)}</div>
-      <div class="kvline"><em>文件</em>${esc(p.files)}</div>
-      <div class="kvline"><em>搜索</em>${esc(p.search)}</div>
-      <div class="kvline"><em>分类</em>${esc(p.cat)}</div>
-      <div class="kvline"><em>登录态</em>${login}</div>
-    </div>`;
-  }).join('');
+  const rows = sitesData && Array.isArray(sitesData.sites) ? sitesData.sites : [];
+  if (!rows.length) {
+    $('#site-cards').innerHTML = '<p class="muted small">加载中…</p>';
+    return;
+  }
+  const days = (sitesData && sitesData.days) || [];
+  $('#site-cards').innerHTML = rows
+    .map((r) => {
+      const l = r.login || {};
+      // 第一行右侧：红绿灯 + 账号名。unknown 是灰灯——「不知道」不是「没登录」
+      const light = l.ok ? 'ok' : l.status === 'unknown' ? 'unk' : 'bad';
+      const name = l.ok ? esc(l.name || '已登录') : l.status === 'unknown' ? '无法检测' : '未登录';
+      const head = `<div class="site-head">${siteDot(r.site)}<b>${esc(r.label || siteName(r.site))}</b>
+        <span class="login-tag" title="${esc(l.reason || '')}"><i class="light ${light}"></i>${name}</span></div>`;
+
+      // 第二行：积分 + 签到 + 连签；右边自动签到开关（包里没 checkin 的站不给开关）
+      const c = r.checkin || null;
+      const bits = [];
+      if (r.points != null) bits.push(`<span><em>积分</em>${fmtNum(r.points)}</span>`);
+      if (c) {
+        bits.push(
+          c.signed
+            ? `<span class="ok">今日已签${c.gain ? ` +${c.gain}` : ''}</span>`
+            : '<span class="bad">今日未签</span>',
+        );
+        if (c.streak) bits.push(`<span><em>连签</em>${c.streak} 天</span>`);
+      } else if (r.note) {
+        bits.push(`<span class="muted small">${esc(r.note)}</span>`);
+      }
+      const canCheckin = r.abilities && r.abilities.checkin;
+      const toggle = canCheckin
+        ? `<label class="auto-in"><input type="checkbox" data-auto="${esc(r.site)}"${r.checkinAuto ? ' checked' : ''}>自动签到</label>`
+        : '';
+      const checkinRow = `<div class="kvline">${bits.join('<i class="sep">·</i>') || '<span class="muted small">这个站没有签到</span>'}${
+        c && !c.signed && canCheckin ? `<button class="btn sm" type="button" data-checkin="${esc(r.site)}">签到</button>` : ''
+      }${toggle}</div>`;
+
+      // 第三行：库内 + 最近 24 小时 + 待补抓
+      const libRow = `<div class="kvline">
+        <span><em>库内</em>${fmtNum(r.models)} 个</span><i class="sep">·</i>
+        <span><em>最近 1 天</em>抓 ${fmtNum(r.last24h || 0)} 个</span>${
+          r.pending > 0 ? `<i class="sep">·</i><span><em>待补抓</em><span class="bad">${fmtNum(r.pending)}</span></span>` : ''
+        }</div>`;
+
+      // 第四行：最近 7 个自然日（含今天）带 3mf 的入库数。柱高按本卡最大值归一，别跨站比
+      const daily = Array.isArray(r.daily) ? r.daily : [];
+      const peak = Math.max(1, ...daily);
+      const bars = daily.length
+        ? `<div class="bars">${daily
+            .map(
+              (n, i) =>
+                `<i style="height:${Math.max(2, Math.round((n / peak) * 100))}%" title="${esc(days[i] || '')}：${n} 个"></i>`,
+            )
+            .join('')}</div><div class="bars-x">${days.map((d) => `<span>${esc(d)}</span>`).join('')}</div>`
+        : '<span class="muted small">还没有数据</span>';
+      const chartRow = `<div class="kvline chart"><em>近 7 天</em><div class="chart-body">${bars}</div></div>`;
+
+      // 第五行：两个限速，改完离开输入框就存，没有保存按钮
+      const rate = r.rate || {};
+      const gap = (rate.global || [60, 120]).join('-');
+      const own = rate.modelGapSec ? rate.modelGapSec.join('-') : '';
+      const perMin = rate.searchPerMin ? String(rate.searchPerMin) : '';
+      const rateRow = `<div class="kvline">
+        <em>下载限速</em><input class="rate-in" type="text" data-gap="${esc(r.site)}" value="${esc(own)}" placeholder="${esc(gap)}" inputmode="numeric"><span class="muted small">秒</span>
+        <em class="ml">搜索限速</em><input class="rate-in" type="text" data-permin="${esc(r.site)}" value="${esc(perMin)}" placeholder="${esc(String(rate.searchPerMinGlobal || 4))}" inputmode="numeric"><span class="muted small">次/分</span>
+      </div>`;
+
+      return `<div class="site-card">${head}${checkinRow}${libRow}${chartRow}${rateRow}</div>`;
+    })
+    .join('');
 }
 
 // 批量动作：后端早就有了，界面以前没有入口
@@ -815,13 +854,72 @@ async function loadSites(force = false) {
   clearFail('#login-err');
   if (force) $('#login-note').textContent = '正在打开浏览器标签探测…';
   try {
-    renderLogin(await api(`/api/console/login${force ? '?force=1' : ''}`));
-    $('#login-note').textContent = `检测于 ${fmtTime(new Date().toISOString())}`;
+    sitesData = await api(`/api/console/sites${force ? '?force=1' : ''}`);
+    renderLogin((sitesData.sites || []).map((s) => s.login || { site: s.site, label: s.label }));
+    renderSites();
+    $('#login-note').textContent = `检测于 ${fmtTime(sitesData.at)}`;
   } catch (e) {
     fail('#login-err', e);
   }
-  if (!wbData) loadWorkbench();
-  else renderSites();
+}
+
+/** 卡片上的签到按钮：走包的 checkin()，回来重取一遍卡片。 */
+async function cardAction(btn) {
+  const site = btn.dataset.checkin;
+  btn.disabled = true;
+  try {
+    const r = await api('/api/console/checkin', { method: 'POST', body: { site } });
+    await loadSites();
+    $('#login-note').textContent = `${siteName(site)}：${r.text || '已签到'}`;
+  } catch (e) {
+    fail('#login-err', e);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+/** 合并一处改动进站点配置再整份回传（后端只认 modelGapSec / searchPerMin / checkinAuto）。
+ *  null 表示「这一项跟随全局」，合并时删掉这个键。 */
+async function saveSite(site, patch) {
+  const cfg = { ...(sitesData.config || {}) };
+  const mine = { ...(cfg[site] || {}), ...patch };
+  for (const k of Object.keys(mine)) if (mine[k] == null) delete mine[k];
+  if (Object.keys(mine).length) cfg[site] = mine;
+  else delete cfg[site];
+  sitesData.config = await api('/api/console/site-config', { method: 'POST', body: cfg });
+  await loadSites();
+}
+
+/** 限速输入框：change = 失焦或回车，改完直接存，没有保存按钮。留空 = 跟随全局。 */
+async function saveRate(el) {
+  const site = el.dataset.gap || el.dataset.permin;
+  const raw = String(el.value || '').trim();
+  const patch = {};
+  try {
+    if (el.dataset.gap) {
+      const nums = raw ? raw.split(/[-~到\s]+/).map(Number).filter((n) => Number.isFinite(n)) : [];
+      if (raw && nums.length !== 2) throw new Error('下载限速写两个数，像 90-150（秒）');
+      patch.modelGapSec = nums.length === 2 ? nums : null;
+    } else {
+      const n = raw ? Number(raw) : NaN;
+      if (raw && !(Number.isFinite(n) && n > 0)) throw new Error('搜索限速写个正整数，像 4（次/分）');
+      patch.searchPerMin = Number.isFinite(n) && n > 0 ? n : null;
+    }
+    await saveSite(site, patch);
+  } catch (e) {
+    await loadSites(); // 先打回服务器上的值，别让错的数字留在框里
+    fail('#login-err', e); // 再报错：loadSites 开头会清空错误框
+  }
+}
+
+/** 自动签到开关。 */
+async function saveAuto(el) {
+  try {
+    await saveSite(el.dataset.auto, { checkinAuto: el.checked });
+  } catch (e) {
+    await loadSites();
+    fail('#login-err', e);
+  }
 }
 
 // ── 设置：大模型打标签 ────────────────────────────────────────
@@ -928,6 +1026,7 @@ document.addEventListener('click', (e) => {
   if (t.id === 'sub-stop-all') return toggleAllSubs(t);
   if (t.dataset.toggle) return toggleSub(t.dataset.toggle, t);
   if (t.id === 'sub-cancel') { $('#sub-form').hidden = true; return; }
+  if (t.dataset.checkin) return cardAction(t);
   if (t.dataset.retry) return retryTask(t.dataset.retry, t);
   if (t.dataset.promote) return promoteTask(t.dataset.promote, t);
   if (t.dataset.stop) return stopTask(t.dataset.stop, t);
@@ -940,6 +1039,14 @@ document.addEventListener('click', (e) => {
   if (t.dataset.word != null && t.dataset.accept != null) {
     return resolveWord(t.dataset.word, t.dataset.accept === '1', t);
   }
+});
+
+// 站点包卡片：输入框改完就存，开关一拨就存
+$('#site-cards').addEventListener('change', (e) => {
+  const t = e.target;
+  if (!t.dataset) return;
+  if (t.dataset.gap || t.dataset.permin) return saveRate(t);
+  if (t.dataset.auto) return saveAuto(t);
 });
 
 // 任务行是 <tr>，键盘要能展开：Enter / 空格当成点击

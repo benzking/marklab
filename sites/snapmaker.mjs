@@ -6,7 +6,7 @@
 //
 // 对外形状见 docs/spec.md §2：match / loginState / meta / fileLinks / search / userModels。
 import * as ch from '../channel.mjs';
-import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
+import { sanitize, fmtHours, str, num, iso, cookiesFor } from '../lib.mjs';
 import { httpGet } from './_http.mjs';
 
 const HOSTS = ['space.snapmaker.cn'];
@@ -94,9 +94,7 @@ export async function loginState() {
   const all = await ch.cookies();
   if (!all) return { ok: false, status: 'unknown', reason: '浏览器未连接' };
   const map = {};
-  for (const c of all) {
-    if (HOSTS.some((h) => c.domain === h || c.domain === `.${h}` || c.domain.endsWith(h))) map[c.name] = c.value;
-  }
+  for (const c of cookiesFor(all, HOSTS)) map[c.name] = c.value;
   if (!map.login_access_token) return { ok: false, status: 'logged-out' };
   const r = await ch.fetchAs('snapmaker', `${API}/api/user/me`, {
     headers: { authorization: `Bearer ${map.login_access_token}` },
@@ -344,6 +342,7 @@ export default {
   meta,
   fileLinks,
   categories,
+  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'] },
   search,
   userModels,
 };

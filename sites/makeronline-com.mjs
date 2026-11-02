@@ -12,8 +12,11 @@ import { sanitize, fmtHours, safeDecode, str, num, iso } from '../lib.mjs';
 
 const HOSTS = ['makeronline.com'];
 const SITE = 'https://www.makeronline.com';
-// 数据命名空间：两个域共用 `makeronline`（库目录、判重键都用它），域只在 site 字段里区分
-const PLATFORM = 'makeronline';
+// 排序值同 makeronline.cn（同一个后端），`order` 参数带关键字也认——实测过（docs/搜索排序.md）
+const ORDER = { downloads: 'download_num_desc', likes: 'like_num_desc', newest: 'submit_at_desc' };
+// 数据命名空间：**必须分域**。.cn/.com 是两套独立 id 空间（同号不同模型），共用一个键会让两个站
+// 的模型落进同一个库目录、撞同一个判重键。.cn 包沿用历史键 `makeronline`，库里 5 条不用迁。
+const PLATFORM = 'makeronline.com';
 
 export function match(raw) {
   let u;
@@ -99,7 +102,6 @@ export async function meta(url) {
 
   return {
     platform: PLATFORM,
-    site: 'com',
     id: hit.id,
     sourceUrl: canonical,
     title: m.title,
@@ -234,7 +236,8 @@ export async function fileLinks(model) {
     // 签名链接的 response-content-disposition 里带着原始文件名
     const m = /filename=(?:UTF-8'')?([^&;]+)/i.exec(safeDecode(u));
     const name = (m && safeDecode(m[1].replace(/\+/g, ' '))) || `${(model.files[0]?.name || 'model').replace(/\.\w+$/, '')}${i ? '-' + (i + 1) : ''}.3mf`;
-    return { name, url: u, size: model.files[0]?.size, kind: 'profile', origin: 'author' };
+    // 这个站的文件清单混着模型本体与打印配置，按扩展名分，别一律当 profile
+    return { name, url: u, size: model.files[0]?.size, kind: /\.stl$/i.test(name) ? 'model' : 'profile', origin: 'author' };
   });
 }
 
@@ -252,17 +255,17 @@ export function normalize(raw) {
     collects: null, // 搜索接口没有收藏数
     comments: null, // 也没有评论数
     picked: Boolean(raw?.is_winner),
-    publishedAt: iso(raw?.created_time),
+    publishedAt: iso(raw?.created_at),
     tags: Array.isArray(raw?.tags) ? raw.tags.filter((t) => typeof t === 'string') : [],
   };
 }
 
-export async function search({ keyword, page = 1, pageSize = 20 } = {}) {
-  // 搜索接口没有排序参数，sort 只保留在返回里
+export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const r = await fetch(`${SITE}/api/search/model`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0 }),
+    // 带关键字时不能传 order：一传就退化成全站榜（实测「皮卡丘」1/20 标题命中 vs 20/20），
+      body: JSON.stringify({ keyword, category_id: '', page, page_size: pageSize, print_type: 0, pure_search: 0, order: keyword ? '' : ORDER[sort] || '' }),
   });
   if (!r.ok) throw new Error(`MakerOnline HTTP ${r.status}`);
   const j = await r.json();
@@ -324,7 +327,6 @@ export default {
   label: 'MakerOnline.com',
   hosts: HOSTS,
   discover: false,
-  searchKey: 'makeronline.com',
   // 分类对照表的 id 空间以海外站为准（docs/categories/merge.json 是按它建的）
   categoriesKey: 'makeronline',
   match,
@@ -333,6 +335,8 @@ export default {
   meta,
   fileLinks,
   categories,
+  // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
+  searchOptions: { sorts: [] },
   search,
   userModels,
 };
@@ -346,9 +350,10 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-com.mjs') {
   console.assert(match(`https://www.makeronline.com/zh/allModel/all/all/0.html`) === null, '列表页不是模型页');
 
   const n = normalize({ mold_id: 1, title: 'O', target_url: 'https://www.makeronline.com/model/O/1.html' });
-  console.assert(n.site === 'makeronline' && n.id === '1', '站点名与 id');
+  console.assert(n.site === 'makeronline.com' && n.id === '1', '数据键带域，不和 .cn 撞');
   console.assert(n.collects === null && n.comments === null, '无收藏/评论');
   console.assert(n.publishedAt === null && n.tags.length === 0, '缺字段默认');
+  console.assert(normalize({ mold_id: 2, created_at: '2024-09-29 23:52:22' }).publishedAt?.startsWith('2024-09-29'), '发布时间读 created_at（接口字段名是 created_at，不是 created_time）');
 
   console.log('makeronline.com pack demo ok');
 }

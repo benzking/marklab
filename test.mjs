@@ -7,7 +7,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import os from 'node:os';
 import path from 'node:path';
-import { autoTags, catIndex, catOf, inside, noFilesKind, resolveNuxt, sanitize, slugify } from './lib.mjs';
+import { autoTags, catIndex, catOf, cookiesFor, inside, noFilesKind, resolveNuxt, sanitize, slugify } from './lib.mjs';
 import * as sitePacks from './sites/index.mjs';
 
 // 站点识别搬进站点包了（票 06）。这里留一层薄壳，老断言不用改：包里叫 site，这里叫 name。
@@ -16,6 +16,43 @@ const matchPlatform = (u) => {
   return h ? { name: h.site, id: h.id, url: h.url } : null;
 };
 import * as dup from './dup.mjs';
+import { checkinPlan } from './sites/makeronline-cn.mjs';
+import { dayNum } from './sites/creality.mjs';
+
+test('签到：7 天周期里读得出今天签没签、第几天、几分', () => {
+  assert.deepEqual(checkinPlan([{ key: 1, is_checkin: 1, integral: 1, date: '2026-11-02' }]), {
+    ready: false,
+    signed: true,
+    day: 1,
+    integral: 1,
+    date: '2026-11-02',
+  });
+  assert.deepEqual(checkinPlan([{ key: 3, is_checkin: 0, integral: 1, date: '' }]), {
+    ready: true,
+    signed: false,
+    day: 3,
+    integral: 1,
+  });
+  assert.equal(checkinPlan([]).ready, false, '周期为空是「限时任务没开」，不是可签');
+  assert.equal(checkinPlan(null).ready, false);
+});
+
+test('签到：创想云的 checkinDay 是 UTC 零点对齐的秒，能对上「今天」', () => {
+  assert.equal(dayNum(1793577600), dayNum(Date.UTC(2026, 10, 2) / 1000), '2026-11-02 签的那天');
+  assert.notEqual(dayNum(1793577600), dayNum(Date.UTC(2026, 10, 3) / 1000), '换一天就不等');
+});
+
+test('cookie 只认同域与子域，evil- 前缀的不许混进来', () => {
+  const all = [
+    { name: 'a', value: '1', domain: '.crealitycloud.cn' },
+    { name: 'b', value: '2', domain: 'crealitycloud.cn' },
+    { name: 'evil', value: 'x', domain: 'evil-crealitycloud.cn' },
+    { name: 'other', value: 'y', domain: 'makerworld.com' },
+  ];
+  assert.deepEqual(cookiesFor(all, ['crealitycloud.cn']).map((c) => c.name), ['a', 'b']);
+  assert.deepEqual(cookiesFor(all, []), []);
+  assert.deepEqual(cookiesFor(null, ['x']), []);
+});
 
 test('认得出三个站点的网址，并抽出 id', () => {
   assert.deepEqual(matchPlatform('https://space.snapmaker.cn/zh/model/1695-model?from=recommend#profileId-1773'), {
@@ -250,6 +287,12 @@ test('判重：同站标题+作者即重复，跨站要先撞 hash，同网址�
     });
     const both = await dup.check(model('creality', 'ccc', 'Benchy 小船', 'Tom'), lib);
     assert.deepEqual([both.of, both.same], ['creality:aaa', true], '同站候选优先，哪怕跨站那条入库更早');
+
+    // 空壳（有 model.json、没文件）不算已入库，不许拦住重抓
+    await put('creality-empty', {
+      platform: 'creality', id: 'empty', title: '空壳模型', author: 'Zoe', fetchedAt: '2026-01-01T00:00:00Z', savedFiles: [],
+    });
+    assert.equal(await dup.check(model('creality', 'x1', '空壳模型', 'Zoe'), lib), null, '没文件的记录不算重复');
   } finally {
     await rm(base, { recursive: true, force: true });
   }
@@ -296,16 +339,16 @@ test('站点包与公共层认同一个网址，四站都已进包', async () =>
   // 已经搬进包的站，包和公共层认的是同一个 id
   const c = sites.match('https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7');
   assert.deepEqual([c.site, c.id], ['creality', '68fddae0d894ed5f6ce386a7']);
-  // MakerOnline 两个域各自成包，数据键都是 makeronline（库目录/判重键不分域）
+  // MakerOnline 两个域各自成包，数据键也分域（.cn/.com 是两套 id 空间，同号不同模型）
   const cn = sites.match('https://www.makeronline.cn/zh/model/x/207581.html');
   assert.deepEqual([cn.site, cn.id], ['makeronline.cn', '207581']);
-  assert.equal(sites.byName('makeronline.cn').platform, 'makeronline');
+  assert.equal(sites.byName('makeronline.cn').platform, 'makeronline.cn');
   // 订阅/搜索沿用旧键 makeronline，要落到 .cn 这个包上
   assert.equal(sites.byName('makeronline').site, 'makeronline.cn');
-  // .com 是另一个独立包，数据键同样是 makeronline
+  // .com 是另一个独立包，数据键带域，不和 .cn 撞库目录/判重键
   const com = sites.match('https://www.makeronline.com/zh/model/x/341770.html');
   assert.deepEqual([com.site, com.id], ['makeronline.com', '341770']);
-  assert.equal(sites.byName('makeronline.com').platform, 'makeronline');
+  assert.equal(sites.byName('makeronline.com').platform, 'makeronline.com');
   // 两个包互不认对方的域（两套登录态，混了就认错人）
   assert.equal(sites.byName('makeronline.cn').match('https://www.makeronline.com/model/x/1.html'), null);
   assert.equal(sites.byName('makeronline.com').match('https://www.makeronline.cn/model/x/1.html'), null);
@@ -474,6 +517,27 @@ test('暂停中手动入队只放行这一条，paused 不动，队列里其余�
   assert.equal(j.queued, 2, '其余两条仍在排队，一条都没跑');
   assert.equal(j.noUrlInState, true, 'queue.json 只存 id，不存任务本体');
   assert.equal(err, '', '不应有报错');
+  await rm(base, { recursive: true, force: true });
+});
+
+test('闸门按站独立：一个站跑完只推它自己的，自定义间隔压不到 60 秒地板以下', async () => {
+  const base = await mkdtemp(path.join(os.tmpdir(), 'ml-gate-'));
+  const code = `
+    import * as tasks from '/home/gly/marklab/tasks.mjs';
+    await tasks.siteConfigLoad();
+    const saved = await tasks.siteConfigSet({ creality: { modelGapSec: [10, 10] }, snapmaker: { modelGapSec: [90, 100] } });
+    const A = 'https://www.crealitycloud.cn/model-detail/' + '1'.padStart(24, '0');
+    tasks.enqueue({ url: A, source: 'bulk' });
+    for (let i = 0; i < 100 && tasks.queueDepth(); i++) await new Promise((r) => setTimeout(r, 20));
+    const st = tasks.state();
+    console.log(JSON.stringify({ saved, gates: Object.keys(st.gates) }));
+    process.exit(0);
+  `;
+  const { out } = await runTasks(code, base);
+  const j = JSON.parse(out.trim().split('\n').pop());
+  assert.deepEqual(j.saved.creality.modelGapSec, [60, 60], '10 秒要被地板抬到 60');
+  assert.deepEqual(j.saved.snapmaker.modelGapSec, [90, 100], '合法覆盖原样存');
+  assert.deepEqual(j.gates, ['creality'], '只推跑过的那个站，别的站不该被拖住');
   await rm(base, { recursive: true, force: true });
 });
 
@@ -670,7 +734,7 @@ process.exit(1);
   await rm(base, { recursive: true, force: true });
 });
 
-test('判重索引每轮重建：别的进程新写的模型，下一轮订阅能看见', async () => {
+test('判重索引每轮重建：只有元数据没文件的不算已入库', async () => {
   const { index } = await import('./dup.mjs');
   const lib = await mkdtemp(path.join(os.tmpdir(), 'ml-idx-'));
   await mkdir(path.join(lib, 'creality-aaa'), { recursive: true });
@@ -679,14 +743,20 @@ test('判重索引每轮重建：别的进程新写的模型，下一轮订阅�
     JSON.stringify({ platform: 'creality', id: 'aaa', title: '甲', author: '乙', fetchedAt: new Date().toISOString() }),
   );
   const first = await index(true, lib);
-  assert.equal(first.keys.has('creality:aaa'), true, '第一次建索引能看到已有模型');
+  assert.equal(first.keys.has('creality:aaa'), false, '只有元数据、没文件的记录不算已入库');
   // 模拟别的进程刚入库
   await mkdir(path.join(lib, 'creality-bbb'), { recursive: true });
   await writeFile(
     path.join(lib, 'creality-bbb', 'model.json'),
     JSON.stringify({ platform: 'creality', id: 'bbb', title: '丙', author: '丁', fetchedAt: new Date().toISOString() }),
   );
-  assert.equal((await index(true, lib)).keys.has('creality:bbb'), true, 'force 重建要看到新模型');
+  assert.equal((await index(true, lib)).keys.has('creality:bbb'), false, 'force 重建要看到新模型');
+  // 下到文件了才算入库
+  await writeFile(
+    path.join(lib, 'creality-bbb', 'model.json'),
+    JSON.stringify({ platform: 'creality', id: 'bbb', title: '丙', author: '丁', fetchedAt: new Date().toISOString(), savedFiles: [{ name: 'a.stl' }] }),
+  );
+  assert.equal((await index(true, lib)).keys.has('creality:bbb'), true, '有文件才是已入库');
   await rm(lib, { recursive: true, force: true });
 });
 
@@ -719,7 +789,7 @@ test('订阅：搜索失败要记进 lastResult.error，不能当成「搜到 0 
       search: async () => { throw new Error('接口 500'); },
       userModels: async () => { throw new Error('接口 500'); },
     });
-    const sub = await subs.create({ name: 't', keywords: ['x'], sites: ['fixture'], roundLimit: 5 });
+    const sub = await subs.create({ name: 't', keywords: ['x'], rules: [{ site: 'fixture', limit: 5 }], matchModes: ['name'] });
     const r = await subs.run(sub.id);
     console.log(JSON.stringify(r.sub.lastResult));
   `);
@@ -742,7 +812,7 @@ test('订阅：一轮跑不完就记「跑到第 N 个」，下一轮从 N 接�
       userModels: async () => ({ total: 0, items: [] }),
     });
     const kw = Array.from({ length: 8 }, (_, i) => 'k' + i);
-    const sub = await subs.create({ name: 't', keywords: kw, sites: ['fixture'], intervalHours: 1 });
+    const sub = await subs.create({ name: 't', keywords: kw, rules: [{ site: 'fixture', limit: 20 }], matchModes: ['name'], intervalHours: 1 });
     // 假时钟：每问一次前进 10 分钟，预算 1h*0.6 = 36 分钟 → 只跑得完前几个
     let t = 0;
     const clock = () => (t += 600_000);
@@ -777,7 +847,7 @@ test('订阅：连点两次「立即跑」不会并发打站点', async () => {
       },
       userModels: async () => ({ total: 0, items: [] }),
     });
-    const sub = await subs.create({ name: 't', keywords: ['a', 'b', 'c'], sites: ['fixture'] });
+    const sub = await subs.create({ name: 't', keywords: ['a', 'b', 'c'], rules: [{ site: 'fixture', limit: 20 }], matchModes: ['name'] });
     const p = subs.run(sub.id);
     let rejected = false;
     try { await subs.run(sub.id); } catch { rejected = true; }
@@ -814,8 +884,85 @@ test('手动加的链接插队：下一个就跑它，其它站不被饿死', as
 });
 
 test('闸门默认是 60–120 秒的区间，不是恒定 60 秒', async () => {
-  const { _testGaps } = await import('./tasks.mjs');
-  const [min, max] = _testGaps();
+  const { gapsMs } = await import('./tasks.mjs');
+  const [min, max] = gapsMs();
   assert.equal(min, 60_000);
   assert.equal(max, 120_000, 'MAX_GAP 被 readGap 的默认值吃掉了，退化成恒定 60 秒');
+});
+
+// 站点包卡片第四行：最近 7 个自然日，有 3mf 才算抓成功
+test('daily7：只数带 3mf 的，按北京时间自然日分桶，7 天以前不上图', async () => {
+  const { daily7 } = await import('./stats.mjs');
+  const now = new Date('2026-11-02T12:00:00+08:00');
+  const mk = (platform, fetchedAt, names) => ({ platform, fetchedAt, savedFiles: names.map((n) => ({ name: n })) });
+  const r = daily7(
+    [
+      mk('creality', '2026-11-02T01:00:00+08:00', ['a.3mf']),
+      mk('creality', '2026-11-02T02:00:00+08:00', ['a.stl']), // 没 3mf，不算
+      mk('creality', '2026-11-01T23:30:00+08:00', ['b.3MF']),
+      mk('snapmaker', '2026-10-27T00:00:00+08:00', ['c.3mf']),
+      mk('snapmaker', '2026-10-26T23:59:00+08:00', ['d.3mf']), // 第 8 天，丢掉
+    ],
+    now,
+  );
+  assert.deepEqual(r.days, ['10-27', '10-28', '10-29', '10-30', '10-31', '11-01', '11-02']);
+  assert.deepEqual(r.daily.creality, [0, 0, 0, 0, 0, 1, 1]);
+  assert.deepEqual(r.daily.snapmaker, [1, 0, 0, 0, 0, 0, 0]);
+});
+
+// docs/site-pack.md §9：契约测试。成员表在 sites/contract.mjs，这里只负责跑它——不联网。
+test('站点包契约：形状全过 checkPack，能力声明在词表里', async () => {
+  const { checkPack, isSearchOptions } = await import('./sites/contract.mjs');
+  for (const p of sitePacks.all()) {
+    assert.deepEqual(checkPack(p), [], `${p.site} 不合契约`);
+    if (p.searchOptions) assert.ok(isSearchOptions(p.searchOptions), `${p.site}.searchOptions 形状不对`);
+  }
+});
+
+test('站点包契约：八种返回模型各有一条断言，假站点走一遍', async () => {
+  const c = await import('./sites/contract.mjs');
+  const fixture = (await import('./sites/_fixture.mjs')).default;
+  assert.ok(c.isModelMeta(await fixture.meta('https://fixture.example/thing/7')), 'meta() 要是 ModelMeta');
+  for (const l of await fixture.fileLinks()) assert.ok(c.isFileLink(l), 'fileLinks() 每项要是 FileLink');
+  assert.ok(c.isCategoryTree(await fixture.categories()), 'categories() 要是 Category[]');
+  assert.ok(c.isLoginState(await fixture.loginState()), 'loginState() 要是 LoginState');
+  assert.ok(c.isPage(await fixture.search({ keyword: 'x' })), 'search() 要是 Page');
+  assert.ok(c.isPage(await fixture.userModels({ uid: 'u' })), 'userModels() 要是 Page');
+  // 签到结果：没有 text，signed 一定是布尔
+  assert.ok(c.isCheckin({ signed: true, streak: 3, gain: 5 }), 'CheckinResult 形状');
+  assert.ok(!c.isCheckin({ signed: true, text: '签到成功' }), 'CheckinResult 不许带 text');
+  assert.ok(c.isCheckinStatus({ points: 3, checkin: { signed: false } }), 'CheckinStatus 形状');
+  // total 拿不到写 null，不许用 0 冒充
+  assert.ok(c.isPage({ total: null, items: [] }), 'total 允许 null');
+  assert.ok(!c.isPage({ total: '0', items: [] }), 'total 不许是字符串');
+});
+
+test('签到文案由公共层拼：包只给字段，人话在 checkinText', async () => {
+  const { checkinText } = await import('./lib.mjs');
+  assert.equal(checkinText({ signed: true, streak: 3, gain: 10 }, true), '签到成功 · 连签 3 天 · +10');
+  assert.equal(checkinText({ signed: true, streak: 1 }, false), '今天已签 · 连签 1 天');
+  assert.equal(checkinText({ signed: false, note: '浏览器没连上' }), '可签 · 浏览器没连上');
+  assert.equal(checkinText(null), '没拿到签到状态');
+});
+
+// 各站点包的自检挂在「文件被直接执行」上，`node --test` 里一条都不跑。
+// 这里替它们跑一遍：纯函数、不联网、不起浏览器。
+test('五个站点包的自检都要能跑过（match/normalize 回归）', async () => {
+  for (const f of ['creality', 'makerworld', 'snapmaker', 'makeronline-cn', 'makeronline-com']) {
+    const r = await new Promise((res) => {
+      const cp = spawn(process.execPath, [`sites/${f}.mjs`], { cwd: '/home/gly/marklab' });
+      let err = '';
+      cp.stderr.on('data', (d) => (err += d));
+      cp.on('close', (code) => res({ code, err }));
+    });
+    assert.equal(r.code, 0, `sites/${f}.mjs 自检失败：${r.err}`);
+  }
+});
+
+test('搜索结果的 site 用包的规范键：别名换回域名，判重键才对得上库', async () => {
+  const { search } = await import('./search.mjs');
+  // 空关键词直接返回空结果，不联网
+  assert.equal((await search('makeronline', '')).site, 'makeronline.cn', '别名要换回规范键');
+  assert.equal((await search('makeronline.com', '')).site, 'makeronline.com');
+  assert.equal((await search('makerworld', '')).site, 'makerworld');
 });

@@ -13,6 +13,7 @@
 import { readFile, appendFile, readdir, mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT } from './lib.mjs';
+import * as ch from './channel.mjs';
 
 const LIB = path.join(ROOT, 'library');
 const LOG_MD = path.join(LIB, '_bulk-log.md');
@@ -237,7 +238,7 @@ async function printSummary() {
 // ── 主循环 ─────────────────────────────────────────────────────
 if (summary) {
   await printSummary();
-  process.exit(0);
+  await ch.exit(0);
 }
 do {
   await round();

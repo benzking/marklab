@@ -7,7 +7,7 @@ import { ROOT } from './lib.mjs';
 
 const FILE = path.join(ROOT, 'data/ipwatch.json');
 const MD = path.join(ROOT, 'data/ipwatch.md');
-const SITES = ['creality', 'makerworld', 'snapmaker', 'makeronline'];
+const SITES = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn'];
 
 const subName = (g) => `IP·${g.name}`;
 
@@ -17,15 +17,15 @@ const INTERVAL = { 5: 4, 4: 6, 3: 12, 2: 24 };
 /** 组的风险等级决定跑多勤。 */
 const subInput = (g) => ({
   name: subName(g),
+  kind: 'keyword',
   keywords: g.keywords,
-  sites: SITES,
+  // 每站一条规则，按下载量取首页 20 条：先保下载量高的那批。
+  // MakerOnline 声明不支持排序（传 order 会丢关键词精度），cleanRules 会把它回落成默认序。
+  rules: SITES.map((site) => ({ site, sort: 'downloads', limit: 20 })),
+  matchModes: ['name'],
   minLikes: 0,
   minDownloads: 0,
   pickedOnly: false,
-  excludeInLibrary: true,
-  sort: 'downloads', // MakerOnline 没有排序参数、Snapmaker 默认是最新，要稳定就固定用下载量
-  pageLimit: 1, // 每个词只取首页 20 条：先保下载量高的那批
-  roundLimit: Number(g.roundLimit) || 20,
   intervalHours: INTERVAL[Number(g.risk)] || 12,
   enabled: true,
 });

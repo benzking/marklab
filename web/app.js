@@ -5,8 +5,8 @@ const SITE = {
   creality: { label: '创想云', color: '#2f6bff' },
   makerworld: { label: 'MakerWorld', color: '#00b96b' },
   snapmaker: { label: 'Snapmaker', color: '#1a7cff' },
-  makeronline: { label: 'MakerOnline', color: '#ff7d00' },
-  'makeronline-cn': { label: 'MakerOnline 国内', color: '#ff7d00' },
+  'makeronline.cn': { label: 'MakerOnline 国内', color: '#ff7d00' },
+  'makeronline.com': { label: 'MakerOnline 国际', color: '#ff7d00' },
 };
 
 const ICON = {
@@ -199,7 +199,6 @@ function onSideClick(e) {
 }
 
 function siteOf(m) {
-  if (m.platform === 'makeronline' && m.site === 'cn') return SITE['makeronline-cn'];
   return SITE[m.platform] || { label: m.platform, color: '#666' };
 }
 function allTags() {
@@ -356,7 +355,7 @@ function detail(m) {
   const files = (m.savedFiles || []).length
     ? m.savedFiles
     : (m.files || []).map((f) => ({ name: f.name, bytes: f.size, exists: false }));
-  const primary = files.find((f) => f.kind !== 'machine') || files[0];
+  const primary = files[0]; // savedFiles 里没有 kind，取第一个就是主文件
   const p = m.print;
 
   return `<a class="back" href="#">← 返回模型库</a>
