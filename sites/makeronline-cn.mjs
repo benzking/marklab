@@ -378,7 +378,7 @@ export function matchUser(raw) {
   return id ? { site: 'makeronline.cn', id } : null;
 }
 
-export default {
+const pack = {
   site: 'makeronline.cn',
   platform: PLATFORM,
   aliases: ['makeronline'], // 历史键：旧订阅/手输的 `makeronline` 仍落到国内站
@@ -396,10 +396,12 @@ export default {
   fileLinks,
   // 有关键字时站点强制相关度，sorts 只在无关键字（逛分类）时生效
   // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
-  searchOptions: { sorts: [] },
+  searchOptions: { sorts: [], tags: false },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
@@ -429,5 +431,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makeronline-cn.mjs') {
   console.assert(jobs[1].body.file_type === 1 && jobs[1].body.mold_id === 42, 'STL 用 mold_id');
   console.assert(jobs[2].body.file_type === 3 && jobs[2].kind === 'doc', '文档走 file_type 3');
 
+  console.assert(pack.searchOptions.tags === false, '搜索结果不带标签');
   console.log('makeronline.cn pack demo ok');
 }

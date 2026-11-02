@@ -345,7 +345,7 @@ export async function categories() {
   }));
 }
 
-export default {
+const pack = {
   site: 'makerworld',
   platform: 'makerworld',
   label: 'MakerWorld',
@@ -358,10 +358,12 @@ export default {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20 },
+  searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20, tags: true },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
@@ -384,5 +386,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
     '预览链反推 3mf 裸链（去签名 query、换扩展名）',
   );
 
+  console.assert(pack.searchOptions.tags === true, 'MakerWorld 搜索结果带 tags');
   console.log('makerworld pack demo ok');
 }

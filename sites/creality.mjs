@@ -437,7 +437,7 @@ export async function categories() {
     }));
 }
 
-export default {
+const pack = {
   site: 'creality',
   // 这个接口按设计就要登录（签名链接靠登录态算），匿名优先在它身上没意义
   loginOnly: ['/api/cxy/v3/model/memberDownload', '/api/cxy/v3/model/3mfDownload'],
@@ -454,10 +454,12 @@ export default {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'] },
+  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: false },
   search,
   userModels,
 };
+
+export default pack;
 
 // 自检：纯函数，不联网、不起浏览器
 if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
@@ -494,5 +496,6 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
   console.assert(trimSiteOnly(siteOnly, []) === null, '全拿到就删字段');
   console.assert(trimSiteOnly(undefined, [p1]) === null, '没有兜底条目也不炸');
 
+  console.assert(pack.searchOptions.tags === false, '创想云搜索结果不带标签');
   console.log('creality pack demo ok');
 }
