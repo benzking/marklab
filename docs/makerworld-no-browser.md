@@ -44,11 +44,12 @@
 - 两条路：仍走浏览器页内 `__NEXT_DATA__`（`userInfo.uid` + designs），或让用户直接存数字 uid。
 - 搜索接口带作者参数全部无效（uid/designCreatorUid/authorUid/creatorUid/designerUid/userId → total 10000 全站）。
 
-## 落地改造范围（尚未实施，2026-11-03）
+## 落地改造范围（已实施，2026-11-04）
 
-- `sites/makerworld.mjs`：`search`/`meta`/`userModels`/`categories` 从 `ch.inPage`/`ch.evalInPage` 改为 node fetch `api.bambulab.cn`（userModels 需先解 handle→uid）；`fileLinks` 的 design JSON 也改 node fetch，CDN HEAD 保持 node。
-- 保持浏览器：`loginState`、f3mf 兜底。
-- 同步更新 README.md（:78/:192/:211/:214）与 docs/spec.md（:549-552 等）里「MakerWorld 只能在页面里 fetch」的说法。
+2026-11-04 落地（GitHub issue 12）：`sites/makerworld.mjs` 的 `search` / `meta` / `fileLinks` 的 design JSON 改走 node fetch `api.bambulab.cn`；`userModels`（handle→uid 无公开端点）与 `categories`（公开 API 只有一级）没有可用端点，保持浏览器；`loginState` 与 f3mf 兜底也保持浏览器。
+
+- 保持浏览器：`loginState`、`userModels`、`categories`、f3mf 兜底。
+- 同步更新 README.md（站点表 / 文件下载 / 匿名优先 / 作者订阅）、docs/spec.md（§4.1 `via`、§7）与 docs/site-pack.md §11.3 里「MakerWorld 只能在页面里 fetch」的说法。
 
 ## 探测脚本
 
