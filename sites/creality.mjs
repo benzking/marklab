@@ -370,8 +370,19 @@ export function normalize(raw) {
 // 1 点赞 / 2 收藏 / 7 下载 / 6 打印。12 助力数站点标签发了也不换序（4 个关键词 + 界面点击都比对过），别加；
 // 5 未确认。0/4/8/10/11/13/14 都是默认综合序。
 const SORT_TYPE = { trend: 0, newest: 3, views: 9, likes: 1, collects: 2, downloads: 7, prints: 6 };
+// 语义筛选 → 原生参数（site-pack.md §11.4）。badge 四个值各是一个独立布尔位，置 1 才算筛上。
+const BADGE_FLAG = { picked: 'isPickModel', exclusive: 'isExclusive', curated: 'isPrintAlwaysSuccess', member: 'isVip' };
+const FEEDS = [{ key: 'weekly-picks', label: '本周值得打', tag: '本周值得打' }];
 
-export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
+/** 纯函数：语义筛选 → smart_search 的 body 片段。 */
+export function filterBody(filters = {}) {
+  const body = {};
+  if (filters.color) body.colorType = filters.color === 'multi' ? 2 : 1;
+  if (BADGE_FLAG[filters.badge]) body[BADGE_FLAG[filters.badge]] = 1;
+  return body;
+}
+
+export async function search({ keyword, page = 1, pageSize = 20, sort, filters } = {}) {
   const r = await fetch(`${SITE}/api/cxy/smart_search/v1/model`, {
     method: 'POST',
     headers: { ...APP_HEADERS, referer: `${SITE}/` },
@@ -382,9 +393,10 @@ export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
       sortType: SORT_TYPE[sort],
       printers: [],
       promoType: 0,
-      isVip: 0,
+      isVip: 0, // 默认不限会员；filters 里的 member 会把它覆盖成 1
       trendType: 1,
       multiMark: 0,
+      ...filterBody(filters),
     }),
   });
   if (!r.ok) throw new Error(`创想云 HTTP ${r.status}`);
@@ -392,6 +404,23 @@ export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const list = j?.result?.list;
   if (!Array.isArray(list)) throw new Error('创想云返回里没有 result.list');
   return { total: num(j.result.count), items: list.map(normalize) };
+}
+
+/** 站方人工滚动的精选流（第 1–3 页实测各 20 条，2026-11-03）。 */
+export async function feed({ key, page = 1, pageSize = 20 } = {}) {
+  const src = FEEDS.find((f) => f.key === key);
+  if (!src) throw new Error(`创想云没有榜单 ${key}`);
+  const r = await fetch(`${SITE}/api/cxy/v3/model/listTrend`, {
+    method: 'POST',
+    headers: { ...APP_HEADERS, referer: `${SITE}/` },
+    body: JSON.stringify({ page, pageSize, tagNames: [src.tag], filterType: 10, trendType: 2 }),
+  });
+  if (!r.ok) throw new Error(`创想云榜单 HTTP ${r.status}`);
+  const j = await r.json();
+  const list = j?.result?.list;
+  if (!Array.isArray(list)) throw new Error('创想云榜单返回里没有 result.list');
+  // result.count 是逐页累加的假值（40/60/80），不是真总数：total 写 null（§11.1）
+  return { total: null, items: list.map(normalize) };
 }
 
 export async function userModels({ uid, page = 1, pageSize = 20 } = {}) {
@@ -456,7 +485,10 @@ const pack = {
   fileLinks,
   categories,
   searchOptions: { sorts: Object.keys(SORT_TYPE), tags: false }, // 声明与映射同源，少一处漂移
+  filters: { color: ['multi', 'single'], badge: ['picked', 'exclusive', 'curated', 'member'] },
+  feeds: FEEDS.map(({ key, label }) => ({ key, label })), // tag 是包内的事，不下发
   search,
+  feed,
   userModels,
 };
 
@@ -498,5 +530,13 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'creality.mjs') {
   console.assert(trimSiteOnly(undefined, [p1]) === null, '没有兜底条目也不炸');
 
   console.assert(pack.searchOptions.tags === false, '创想云搜索结果不带标签');
+  // 筛选翻译：多色/单色是同一个 colorType，badge 是各自独立的布尔位
+  console.assert(filterBody({ color: 'multi' }).colorType === 2, '多色 → colorType 2');
+  console.assert(filterBody({ color: 'single' }).colorType === 1, '单色 → colorType 1');
+  console.assert(filterBody({}).colorType === undefined, '不筛就不带 colorType');
+  console.assert(JSON.stringify(filterBody({ badge: 'member' })) === '{"isVip":1}', '会员模型覆盖 isVip:0');
+  console.assert(JSON.stringify(filterBody({ badge: 'picked' })) === '{"isPickModel":1}', '星标 → isPickModel');
+  console.assert(JSON.stringify(filterBody({ badge: 'no-such' })) === '{}', '词表外的值不进 body');
+  console.assert(pack.feeds.length === 1 && pack.feeds[0].key === 'weekly-picks', '榜单声明');
   console.log('creality pack demo ok');
 }

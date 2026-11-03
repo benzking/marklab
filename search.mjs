@@ -1,6 +1,7 @@
 // 站点搜索：统一 Item 形状 + 按站限速（ADR-0005 第 3 节）。
 // 具体怎么搜在站点包里，这里只管限速、兜错、归一化。
 import * as sites from './sites/index.mjs';
+import { FILTERS } from './sites/contract.mjs';
 import { siteConfigGet } from './tasks.mjs';
 import * as ch from './channel.mjs';
 
@@ -111,18 +112,67 @@ export function sortOfSite(site, sort) {
   return sortOf(sites.byName(site), sort);
 }
 
+/** 纯函数：语义筛选 → 该站真支持的那部分（site-pack.md §11.4）。
+ *  词表外的键/值、包没声明的值都丢掉，只记一行日志——筛选失效不该让订阅停摆。 */
+export function filterFor(site, filters) {
+  const declared = sites.byName(site)?.filters || {};
+  const out = {};
+  for (const [k, v] of Object.entries(filters || {})) {
+    const why = !Object.hasOwn(FILTERS, k)
+      ? `词表里没有 ${k}`
+      : !FILTERS[k].includes(v)
+        ? `${k}=${v} 不在词表`
+        : !(declared[k] || []).includes(v)
+          ? `${site} 不支持 ${k}=${v}`
+          : null;
+    if (why) {
+      console.warn(`[filter] 丢掉 ${why}`);
+      continue;
+    }
+    out[k] = v;
+  }
+  return out;
+}
+
+/** 某站声明了哪些榜单源（控制台下拉、订阅校验都用它）。 */
+export function feedsOf(site) {
+  return sites.byName(site)?.feeds || [];
+}
+
+/** 榜单取一页。形状与 search() 同构；站点失败给空页 + error，不拖垮整轮。 */
+export async function feed(site, key, { page = 1, pageSize = 20 } = {}) {
+  const pack = sites.byName(site);
+  const base = { site: pack?.site || site, feed: key, page, total: null, items: [] };
+  if (!pack || !feedsOf(site).some((f) => f.key === key)) return { ...base, error: `该站没有榜单 ${key}` };
+  await throttle(site);
+  try {
+    const r = await pack.feed({ key, page, pageSize });
+    return { ...base, total: r.total ?? null, items: r.items };
+  } catch (e) {
+    console.error(`[feed] ${site} ${key} 失败：${e.message}`);
+    return { ...base, error: String(e.message || e).slice(0, 200) };
+  }
+}
+
 /** 搜索一个站。返回统一形状；站点失败时给空结果，不拖垮整轮。 */
-export async function search(site, keyword, { page = 1, sort = 'downloads', pageSize = 20 } = {}) {
+export async function search(site, keyword, { page = 1, sort = 'downloads', pageSize = 20, filters } = {}) {
   const kw = String(keyword || '').trim();
   const pack = sites.byName(site);
   const used = sortOf(pack, sort);
+  const clean = filterFor(site, filters);
   if (pack && kw && used !== sort) console.warn(`[search] ${site} 不支持 sort=${sort}，按 ${used || '默认序'} 搜`);
   // total 拿不到就是 null：0 会被订阅当成「到底了」（site-pack.md §11.1）
   const base = { site: pack?.site || site, keyword: kw, page, sort: used, total: null, items: [] };
   if (!pack || !kw) return base;
   await throttle(site);
   try {
-    const r = await pack.search({ keyword: kw, page, pageSize, ...(used ? { sort: used } : {}) });
+    const r = await pack.search({
+      keyword: kw,
+      page,
+      pageSize,
+      ...(used ? { sort: used } : {}),
+      ...(Object.keys(clean).length ? { filters: clean } : {}),
+    });
     return { ...base, total: r.total ?? null, items: r.items };
   } catch (e) {
     // 调用方要能分清「搜到 0 条」和「搜索失败」——两者对订阅的含义完全不同
@@ -166,6 +216,17 @@ function demo() {
   console.assert(sortOf(fake, 'score') === 'downloads', '不支持回落第一项');
   console.assert(sortOf({ searchOptions: { sorts: [] } }, 'downloads') === null, '不声明排序就不带 sort');
   console.assert(sortOf(undefined, 'downloads') === null, '没有包也不炸');
+
+  // 筛选：只留下词表里有、且该站声明过的值
+  const ff = (site, f) => JSON.stringify(filterFor(site, f));
+  console.assert(ff('creality', { color: 'multi' }) === '{"color":"multi"}', '声明过的值留下');
+  console.assert(ff('creality', { color: 'rainbow' }) === '{}', '词表外的值丢掉');
+  console.assert(ff('creality', { nope: 'x' }) === '{}', '词表外的键丢掉');
+  console.assert(ff('creality', { badge: 'cyberbrick' }) === '{}', '词表有但该站没声明的值丢掉');
+  console.assert(ff('no-such-site', { color: 'multi' }) === '{}', '未知站点不炸');
+  console.assert(ff('creality', {}) === '{}' && ff('creality', undefined) === '{}', '没有筛选就是空对象');
+  console.assert(ff('snapmaker', { color: 'multi', badge: 'picked' }) === '{"color":"multi"}', '只留该站支持的那部分');
+  console.assert(feedsOf('makerworld').length === 0, '没声明 feeds 就是 []');
 
   console.log('search demo ok');
 }

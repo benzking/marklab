@@ -266,13 +266,15 @@ export function normalize(raw) {
 
 const LIST_HEADERS = { accept: 'application/json', origin: 'https://space.snapmaker.cn', referer: 'https://space.snapmaker.cn/' };
 
-export async function search({ keyword, page = 1, pageSize = 20, sort = 'downloads' } = {}) {
+export async function search({ keyword, page = 1, pageSize = 20, sort = 'downloads', filters } = {}) {
   const q = new URLSearchParams({
     keyword,
     page: String(page),
     pageSize: String(pageSize),
     sort: SORT[sort] || 'downloads',
   });
+  // 语义值原样就是原生值（colorType=multi|single）；单色的收窄效果未实测，见 site-pack.md §11.4
+  if (filters?.color) q.set('colorType', filters.color);
   const r = await fetch(`${API}/api/model/list?${q}`, { headers: LIST_HEADERS });
   if (!r.ok) throw new Error(`Snapmaker HTTP ${r.status}`);
   const j = await r.json();
@@ -341,6 +343,7 @@ const pack = {
   fileLinks,
   categories,
   searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: true },
+  filters: { color: ['multi', 'single'] },
   search,
   userModels,
 };

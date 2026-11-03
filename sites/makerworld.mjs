@@ -272,10 +272,25 @@ const readNextData = () => {
   return { total: pp?.total, designs: pp?.designs };
 };
 
+// 语义筛选 → 查询参数（site-pack.md §11.4）。badge 走 model_tag（逗号连的是 AND，单值就是它本身）。
+const BADGE_TAG = { picked: 'featured', exclusive: 'exclusive', cyberbrick: 'cb', parametric: 'param' };
+// supply / customizable 不在 model_tag 枚举里：`model_tag=makersSupply` 被静默忽略（total 与不筛相同，
+// 2026-11-03 实测），只有独立参数才收窄（3698 → 104 / 48），所以这两个值走独立参数。
+const BADGE_FLAG = { supply: 'makersSupply', customizable: 'customizable' };
+
+/** 纯函数：语义筛选 → 搜索接口的 query 片段。 */
+export function filterQuery(filters = {}) {
+  const q = {};
+  if (filters.color) q.multiColor = filters.color === 'multi' ? 'true' : 'false';
+  if (BADGE_TAG[filters.badge]) q.model_tag = BADGE_TAG[filters.badge];
+  if (BADGE_FLAG[filters.badge]) q[BADGE_FLAG[filters.badge]] = 'true';
+  return q;
+}
+
 // 搜索翻页只能走站点自己的接口：SSR 的 __NEXT_DATA__ 只装第 1 页（URL 里的 page 它不认，
 // 1–5 页回同一批 20 条），接口的 offset 才是真翻页（offset=0 与 SSR 第 1 页逐条相同，2026-10-31 实测）。
 // 跑在页内：同源带登录态，匿名也能取。
-async function readSearchHits({ keyword, orderBy, offset }) {
+async function readSearchHits({ keyword, orderBy, offset, extra }) {
   const q = new URLSearchParams({
     orderBy,
     designType: '0',
@@ -284,6 +299,7 @@ async function readSearchHits({ keyword, orderBy, offset }) {
     limit: '20',
     offset: String(offset),
     ref_: '0031_07q_yz',
+    ...extra, // 筛选参数在页外算好再传进来：页内函数拿不到模块作用域
   });
   const r = await fetch(`/api/v1/search-service/select/design2?${q}`, { headers: { accept: 'application/json' } });
   if (!r.ok) return { status: r.status };
@@ -291,11 +307,11 @@ async function readSearchHits({ keyword, orderBy, offset }) {
   return { total: j?.total, hits: j?.hits };
 }
 
-export async function search({ keyword, page = 1, sort } = {}) {
+export async function search({ keyword, page = 1, sort, filters } = {}) {
   const orderBy = ORDER[sort] || 'score';
   // 一页固定 20 条，翻页靠 offset
   const url = `${SITE}/zh/search/models?keyword=${encodeURIComponent(keyword)}&orderBy=${orderBy}&page=${page}`;
-  const data = await ch.inPage('makerworld', url, readSearchHits, { keyword, orderBy, offset: (page - 1) * 20 }, { wait: 2000 });
+  const data = await ch.inPage('makerworld', url, readSearchHits, { keyword, orderBy, offset: (page - 1) * 20, extra: filterQuery(filters) }, { wait: 2000 });
   if (!data || !Array.isArray(data.hits)) {
     throw new Error(`MakerWorld 搜索接口没回 hits（HTTP ${data?.status ?? '没连上浏览器'}；站点改版或浏览器没开）`);
   }
@@ -360,6 +376,7 @@ const pack = {
   fileLinks,
   categories,
   searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20, tags: true },
+  filters: { color: ['multi', 'single'], badge: ['picked', 'exclusive', 'cyberbrick', 'supply', 'customizable', 'parametric'] },
   search,
   userModels,
 };
@@ -388,5 +405,13 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   );
 
   console.assert(pack.searchOptions.tags === true, 'MakerWorld 搜索结果带 tags');
+  // 筛选翻译：多色走 multiColor，标签走 model_tag
+  console.assert(filterQuery({ color: 'multi' }).multiColor === 'true', '多色 → multiColor=true');
+  console.assert(filterQuery({ color: 'single' }).multiColor === 'false', '单色 → multiColor=false');
+  console.assert(filterQuery({ badge: 'picked' }).model_tag === 'featured', '星标 → model_tag=featured');
+  console.assert(filterQuery({ badge: 'cyberbrick' }).model_tag === 'cb', 'CyberBrick → cb');
+  console.assert(filterQuery({ badge: 'supply' }).makersSupply === 'true' && !filterQuery({ badge: 'supply' }).model_tag, '供给 → 独立参数（model_tag 不认这个值）');
+  console.assert(filterQuery({ badge: 'customizable' }).customizable === 'true', '可定制 → 独立参数');
+  console.assert(JSON.stringify(filterQuery({})) === '{}', '不筛就不带参数');
   console.log('makerworld pack demo ok');
 }

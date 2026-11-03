@@ -1007,6 +1007,34 @@ test('订阅规则：站点不支持的排序回落该站默认序，不抛错',
   assert.equal(cleanRules([{ site: 'makeronline.cn', limit: 20 }])[0].sort, sortsOf('makeronline.cn')[0] ?? null, '不传排序用该站默认序');
 });
 
+test('筛选：只留下词表里有、且该站声明过的值，其余丢掉不抛错', async () => {
+  const { filterFor } = await import('./search.mjs');
+  assert.deepEqual(filterFor('creality', { color: 'multi' }), { color: 'multi' }, '声明过的值留下');
+  assert.deepEqual(filterFor('makerworld', { color: 'single', badge: 'picked' }), { color: 'single', badge: 'picked' }, '两个键都支持就都留');
+  assert.deepEqual(filterFor('creality', { color: 'rainbow' }), {}, '词表外的值丢掉');
+  assert.deepEqual(filterFor('creality', { size: 'big' }), {}, '词表外的键丢掉');
+  assert.deepEqual(filterFor('snapmaker', { badge: 'picked' }), {}, '词表里有但该站没声明的值丢掉');
+  assert.deepEqual(filterFor('no-such-site', { color: 'multi' }), {}, '未知站点不炸，返回空对象');
+  assert.deepEqual(filterFor('creality', undefined), {}, '没有筛选就是空对象');
+  assert.deepEqual(filterFor('creality', { color: 'multi', badge: 'picked' }), { color: 'multi', badge: 'picked' }, '都支持就都留');
+});
+
+test('榜单：feedsOf 只读包声明的那份，没声明的站回空数组', async () => {
+  const { feedsOf } = await import('./search.mjs');
+  assert.deepEqual(feedsOf('makerworld'), [], 'MakerWorld 没有榜单');
+  assert.deepEqual(feedsOf('snapmaker'), [], 'Snapmaker 没有榜单');
+  assert.deepEqual(feedsOf('no-such-site'), [], '未知站点不炸');
+  assert.deepEqual(feedsOf('creality'), [{ key: 'weekly-picks', label: '本周值得打' }], '创想云「本周值得打」');
+});
+
+test('榜单：key 不在声明里就回 error，不抛错', async () => {
+  const { feed } = await import('./search.mjs');
+  const r = await feed('creality', 'no-such-feed');
+  assert.deepEqual(r.items, [], '空页');
+  assert.equal(r.total, null, '拿不到总数就是 null');
+  assert.match(r.error, /没有榜单/, '要能分清「没这条榜单」和「取页失败」');
+});
+
 test('订阅规则：limit 夹在 1–1000，150 不许被凑成整页', async () => {
   const { cleanRules } = await import('./subs.mjs');
   assert.equal(cleanRules([{ site: 'makerworld', limit: 150 }])[0].limit, 150, '前 N 条是硬上限：150 就是 150');
