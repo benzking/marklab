@@ -9,6 +9,7 @@
 - `api.bambulab.cn`（国内）是 MakerWorld 的公开 API 域名，与 `makerworld.com.cn` **同一套 id 空间、同一份数据**：
   - design 195581 两边都是「COC 部落冲突 11级大本营」；
   - 搜索 benchy/小船/dragon/花瓶 total 完全一致（3014/3551/3693/3547），前 20 条 id 逐条相同、翻页相同、五种 orderBy 相同。
+  - **例外（2026-11-04 复核）**：默认 `score`（相关度）排序，站点对**已登录**用户与匿名用户给的结果不同——同一时刻已登录页内 3418 条、匿名 API 3429 条，前 20 条只有 9 条重合；页内 `credentials:'omit'` 的匿名 fetch 与 API 前 8 条逐条一致。其余四种（downloadCount / likeCount / newUploads / hotScore）两边完全一致。所以「匿名」结果以 API 为准，登录态不参与排序；`search.mjs` 默认 `downloads` 序不受影响。
 - `api.bambulab.com`（全球）是**另一套 id 空间**，别用（benchy total 2808 vs .cn 3014，重叠 0/20）。
 - api.bambulab.cn **完全无防护**：不带 UA/cookie 200、curl UA 也 200、20 并发全 200、连续 20 页全 200。
 
