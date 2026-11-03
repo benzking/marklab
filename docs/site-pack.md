@@ -214,7 +214,7 @@ searchOptions: {
 | `loginState` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `meta` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ | ✓ |
+| `search` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `searchOptions.sorts` | trend, newest, views, likes, collects, downloads, prints | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） | likes, downloads, newest |
 | `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ | ✗ |
 | 页大小固定 | 否 | **20** | 否 | 否 | 否 | 否 |
