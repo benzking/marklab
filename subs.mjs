@@ -4,6 +4,7 @@ import { readFile, mkdir, appendFile } from 'node:fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { writeJson, ROOT } from './lib.mjs';
+import * as events from './events.mjs';
 import * as search from './search.mjs';
 import * as tasks from './tasks.mjs';
 import * as dup from './dup.mjs';
@@ -436,10 +437,12 @@ async function runOnce(id, clock) {
   const now = clock();
   const keep = [];
   const queued = [];
+  const tally = {}; // 本轮每条候选判成什么：进运行日志的那一行（ADR-0007）
 
   for (const cand of cands) {
     const old = prevMap.get(cand.key);
     const decision = decide(cand, sub, { libKeys, busy }); // 每轮重判：判定是本地读盘，省不出什么，却会挡住「删了想重下」
+    tally[decision] = (tally[decision] || 0) + 1;
     const row = {
       key: cand.key,
       sources: cand.sources,
@@ -484,6 +487,19 @@ async function runOnce(id, clock) {
     await writeJson(path.join(HIT_DIR, `${sub.id}.candidates.json`), { items: keep });
   }
   if (allHits.length) await appendHits(sub.id, allHits);
+  // 命中逐条进运行日志：候选明细留在订阅详情页，这里只留「谁进了队」（ADR-0007）
+  for (const hit of allHits) {
+    events.emit('subs-candidate', {
+      sub: sub.id,
+      subName: sub.name,
+      site: hit.site,
+      title: hit.title,
+      url: hit.url,
+      likes: hit.likes || 0,
+      downloads: hit.downloads || 0,
+      taskId: hit.taskId || null,
+    });
+  }
 
   // 跑到哪了：下轮从第一个没跑完的任务接着跑；全跑完就归零
   let cursor = 0;
@@ -504,6 +520,18 @@ async function runOnce(id, clock) {
   };
   if (lastError) sub.lastResult.error = lastError;
   await persist();
+  events.emit('subs-run', {
+    sub: sub.id,
+    subName: sub.name,
+    site: (sub.sites || [])[0] || null,
+    searched,
+    candidates: cands.length,
+    matched: allHits.length,
+    decisions: tally,
+    stopped,
+    ms: Math.max(0, Date.now() - (Date.parse(startedAt) || Date.now())),
+    error: lastError,
+  });
 
   return { sub, hits: allHits, candidates: cands.length, searched };
 }
@@ -526,6 +554,7 @@ export async function tick(now = Date.now()) {
         sub.lastRunAt = new Date().toISOString();
         sub.lastResult = { at: sub.lastRunAt, error: String(e.message || e).slice(0, 200) };
         await persist();
+        events.emit('subs-run', { sub: sub.id, subName: sub.name, searched: 0, candidates: 0, matched: 0, decisions: {}, error: sub.lastResult.error });
         ran.push({ sub, error: sub.lastResult.error });
       }
     }

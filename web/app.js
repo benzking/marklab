@@ -20,6 +20,7 @@ const ICON = {
   arrow: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3.4 8h9.2M8.8 4.2 12.6 8l-3.8 3.8" stroke-linecap="round" stroke-linejoin="round"/></svg>',
   grid: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><rect x="2.2" y="2.2" width="5.6" height="5.6" rx="1.4"/><rect x="10.2" y="2.2" width="5.6" height="5.6" rx="1.4"/><rect x="2.2" y="10.2" width="5.6" height="5.6" rx="1.4"/><rect x="10.2" y="10.2" width="5.6" height="5.6" rx="1.4"/></svg>',
   folder: '<svg viewBox="0 0 18 18" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M2.4 5.2c0-.8.6-1.4 1.4-1.4h3l1.6 1.8h6.4c.8 0 1.4.6 1.4 1.4v6.4c0 .8-.6 1.4-1.4 1.4H3.8c-.8 0-1.4-.6-1.4-1.4V5.2Z" stroke-linejoin="round"/></svg>',
+  author: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="5.4" r="2.6"/><path d="M3.2 13.2c.6-2.4 2.5-3.6 4.8-3.6s4.2 1.2 4.8 3.6" stroke-linecap="round"/></svg>',
 };
 
 const $ = (sel) => document.querySelector(sel);
@@ -352,10 +353,6 @@ function detail(m) {
   const imgs = (m.localImages && m.localImages.length ? m.localImages : m.images || []).map(
     (p) => (p.startsWith('http') ? p : `/library/${m.dir}/${p}`),
   );
-  const files = (m.savedFiles || []).length
-    ? m.savedFiles
-    : (m.files || []).map((f) => ({ name: f.name, bytes: f.size, exists: false }));
-  const primary = files[0]; // savedFiles 里没有 kind，取第一个就是主文件
   const p = m.print;
 
   return `<a class="back" href="#">← 返回模型库</a>
@@ -396,7 +393,7 @@ function detail(m) {
           : ''}
       </section>
       ${m.profiles?.length ? profilesCard(m) : ''}
-      ${platesPanel(m)}
+      <div id="plates-slot">${platesPanel(m, m.activeProfileId)}</div>
       ${docsCard(m)}
       ${p && !m.profiles?.length ? `<section class="panel">
         <h2>打印配置</h2>
@@ -422,32 +419,6 @@ function detail(m) {
           : ''}
       </section>` : ''}
       <section class="panel">
-        <h2>文件 · ${files.length}</h2>
-        <div class="filepick">
-          ${files
-            .map(
-              (f, i) => `<button class="fpick${i === 0 ? ' on' : ''}" data-file="${esc(f.path || '')}" data-name="${esc(f.name)}" ${
-                f.path && f.exists ? '' : 'data-missing="1"'
-              }>
-              <span class="fname">${esc(f.name)}</span>
-              <span class="fmeta">${esc((f.name.match(/\.(\w+)$/) || [, ''])[1].toUpperCase())} · ${esc(fmtSize(f.bytes))}${
-                f.path && f.exists ? '' : ' · 未下载'
-              }</span>
-            </button>`,
-            )
-            .join('')}
-        </div>
-        ${(m.siteOnlyFiles || []).length
-          ? `<div class="siteonly">${m.siteOnlyFiles
-              .map(
-                (f) => `<div class="file"><span>${esc(f.name)}</span><small>${esc(fmtSize(f.size))} · <a href="${esc(
-                  f.url || m.sourceUrl,
-                )}" target="_blank" rel="noreferrer">去站点下载 ↗</a></small></div>`,
-              )
-              .join('')}</div>`
-          : ''}
-        <div id="file-preview" class="fpreview"><span class="sub">选一个文件看内容…</span></div>
-        <div class="fdload" id="fdload"></div>
         ${(m.sameModels || []).length
           ? `<div class="same"><h3>同模型链接</h3>${m.sameModels
               .map((s) => {
@@ -458,6 +429,7 @@ function detail(m) {
               })
               .join('')}</div>`
           : ''}
+        ${originalsLine(m)}
         <div style="display:flex;gap:8px;margin-top:14px;flex-wrap:wrap">
           <a class="btn-ghost" href="${esc(m.sourceUrl)}" target="_blank" rel="noreferrer">原页面 ↗</a>
           <button class="btn-ghost" data-refetch="${esc(m.dir)}">重新抓取</button>
@@ -489,9 +461,10 @@ async function showDetail(dir) {
   $('#detail-view').hidden = false;
   $('#detail-view').innerHTML = detail(m);
   window.scrollTo(0, 0);
-  wireFilePicker(m);
   wireProfileSwitch(m);
   wireMachineFilter();
+  wirePrinterButton();
+  loadPlates(m);
   document.querySelectorAll('#detail-view .thumbs img').forEach((t) => {
     t.addEventListener('click', () => {
       const hero = document.querySelector('#detail-view img.dhero');
@@ -653,93 +626,19 @@ function route() {
 load().then(route);
 
 
-// ── 文件选择 + 预览 ────────────────────────────────────────────
-function wireFilePicker(m) {
-  const files = m.savedFiles || [];
-  const pick = document.querySelector('.fpick');
-  if (!pick) return;
-  const select = (btn) => {
-    document.querySelectorAll('.fpick').forEach((b) => b.classList.remove('on'));
-    btn.classList.add('on');
-    const rel = btn.dataset.file;
-    const name = btn.dataset.name;
-    const entry = files.find((f) => (f.path || '') === rel);
-    const dl = document.getElementById('fdload');
-    if (entry && entry.exists) {
-      dl.innerHTML = `<div class="split"><a href="/library/${m.dir}/${entry.path}" download>${ICON.download}<span>下载 ${esc(
-        (entry.name.match(/\.(\w+)$/) || [, ''])[1].toUpperCase(),
-      )}</span></a></div>`;
-      showPreview(m, rel ? rel.split('/').pop() : name);
-    } else {
-      dl.innerHTML = `<button class="btn-ghost" data-refetch="${esc(m.dir)}">这个文件不在本地，点这里补抓</button>`;
-      const box = document.getElementById('file-preview');
-      if (box) box.innerHTML = '<span class="sub">文件还没下到本地，补抓之后就能预览</span>';
-    }
-  };
-  document.querySelectorAll('.fpick').forEach((b) => b.addEventListener('click', () => select(b)));
-  select(pick);
-}
-
-async function showPreview(m, fileName) {
-  const box = document.getElementById('file-preview');
-  if (!box) return;
-  box.innerHTML = '<span class="sub"><span class="spin"></span> 读文件…</span>';
-  try {
-    const r = await fetch(`/api/inspect?dir=${encodeURIComponent(m.dir)}&file=${encodeURIComponent(fileName)}`);
-    const info = await r.json();
-    if (info.error) throw new Error(info.error);
-    box.innerHTML = renderPreview(m, fileName, info);
-  } catch (e) {
-    box.innerHTML = `<span class="sub">读不出来：${esc(e.message)}</span>`;
-  }
-}
-
-function renderPreview(m, fileName, info) {
-  // 3mf 盘图是派生数据，在 /preview/ 下；不是派生数据才回落到库目录
-  const thumbUrl = (t) => (String(t).startsWith('/') ? esc(t) : `/library/${m.dir}/files/${esc(t)}`);
-  if (info.kind === '3mf') {
-    const plates = info.plates || [];
-    return `<div class="pstats">
-        <span>${ICON.plate}${plates.length} 个打印盘</span>
-        ${info.objects ? `<span>${ICON.box}${info.objects} 个对象</span>` : ''}
-        ${info.layerHeight ? `<span>${ICON.clock}层高 ${info.layerHeight} mm</span>` : ''}
-      </div>
-      ${plates.length
-        ? `<div class="pgrid">${plates
-            .map(
-              (pl) => `<figure class="pitem">
-                ${pl.thumb ? `<img src="${thumbUrl(pl.thumb)}" alt="" loading="lazy">` : '<div class="ph"></div>'}
-                <figcaption><b>${esc(pl.name || '打印盘 ' + pl.index)}</b>
-                <span>${[fmtH(pl.timeSec), fmtG(pl.weightG)].filter(Boolean).map(esc).join(' · ') || `第 ${pl.index} 盘`}</span>
-                ${pl.filaments?.length ? `<div class="fchips small">${filaments(pl.filaments)}</div>` : ''}
-                </figcaption></figure>`,
-            )
-            .join('')}</div>`
-        : '<span class="sub">这个 3mf 里没有打印盘预览图</span>'}`;
-  }
-  if (info.kind === 'stl') {
-    return `<div class="pstats">
-        ${info.triangles ? `<span>${ICON.box}${info.triangles.toLocaleString('en-US')} 个三角面</span>` : ''}
-        ${info.sizeMm ? `<span>${ICON.ruler}${info.sizeMm.map((v) => v + ' mm').join(' × ')}</span>` : ''}
-      </div>
-      ${info.note ? `<span class="sub">${esc(info.note)}</span>` : ''}`;
-  }
-  return `<span class="sub">${esc(info.kind)} 文件，没有可预览的内容</span>`;
-}
-
-
 // ── 打印配置列表（创想云 3mf 版）＋悬浮窗 ──────────────────────
 function profilesCard(m) {
   const all = [...new Set(m.profiles.flatMap((p) => p.machines || []))].sort();
   const pick = localStorage.getItem('machine') || '';
   const rows = m.profiles
     .map((p, i) => {
-      const on = p.id === m.activeProfileId || (!m.activeProfileId && i === 0);
+      const on = String(p.id) === String(m.activeProfileId ?? '') || (m.activeProfileId == null && i === 0);
       return `<button type="button" class="prow2${on ? ' on' : ''}" data-profile="${esc(p.id)}" data-machines="${esc((p.machines || []).join('|'))}">
         <div class="pthumb">${p.thumbnail ? `<img src="${esc(p.thumbnail)}" alt="" loading="lazy">` : ''}</div>
         <div class="pinfo">
           <div class="pname">${esc(p.name)}</div>
           <div class="psub">
+            ${p.byAuthor ? `<span class="byauthor">${ICON.author}作者</span>` : ''}
             ${p.machine ? `<span>${esc(p.machine)}</span>` : ''}
             ${p.timeSec ? `<span>${ICON.clock}${esc(fmtH(p.timeSec))}</span>` : ''}
             ${p.plates ? `<span>${ICON.plate}${p.plates} 盘</span>` : ''}
@@ -761,7 +660,6 @@ function profilesCard(m) {
                 .filter(Boolean).map(esc).join(' · ')}</div>`
             : ''}
           ${p.filaments?.length ? `<div class="fchips">${filaments(p.filaments)}</div>` : ''}
-          ${p.url ? `<a class="pop-link" href="${esc(p.url)}" target="_blank" rel="noreferrer">在原站打开这个配置 ↗</a>` : ''}
           ${p.machines?.length
             ? `<div class="pop-machines"><span class="lbl">兼容机型 ${p.machines.length}</span>${p.machines
                 .slice(0, 8)
@@ -780,29 +678,66 @@ function profilesCard(m) {
           .join('')}</select>`
       : ''}</h2>
     <div class="plist">${rows}</div>
+    <div class="pact" id="pact">${actionBar(m, activeProfile(m, m.activeProfileId))}</div>
     <div class="sub" style="margin-top:8px">鼠标悬停看配置详情；3mf 本体随抓取一起下（登录态）</div>
   </section>`;
+}
+
+/** 配置下方那条按钮：下载 3MF 只链本地已下的那份，没下到就回站点（spec §9.3）。
+ *  发送到打印机是占位（功能待做）。 */
+function actionBar(m, prof) {
+  const saved = prof?.filePath ? (m.savedFiles || []).find((f) => f.path === prof.filePath && f.exists !== false) : null;
+  const dl = saved
+    ? `<a class="btn-main" href="/library/${m.dir}/${esc(saved.path)}" download>${ICON.download}<span>下载 3MF</span></a>`
+    : `<a class="btn-ghost" href="${esc(prof?.url || m.sourceUrl)}" target="_blank" rel="noreferrer">去站点下载 ↗</a>`;
+  return `<div class="pact-row">
+    <button class="btn-ghost" type="button" id="send-printer" title="功能待做">发送到打印机</button>
+    ${dl}
+  </div>`;
+}
+
+/** 原件（stl/step 那批）：只在本地没有 3mf 时出现，否则等于给老文件加噪音（spec §9.3）。 */
+function originalsLine(m) {
+  const files = m.savedFiles || [];
+  if (files.some((f) => f.kind === 'profile' && f.exists !== false)) return '';
+  const orig = files.filter((f) => f.kind === 'model' && f.exists !== false);
+  if (!orig.length) return '';
+  return `<div class="origline">原件 · ${orig.length} · ${orig
+    .map((f) => `<a href="/library/${m.dir}/${esc(f.path)}" download>${esc(f.name)}</a>`)
+    .join('、')}</div>`;
 }
 
 
 // ── 打印盘：跟随选中的打印配置 ─────────────────────────────────
 function activeProfile(m, id) {
   const list = m.profiles || [];
-  return list.find((x) => x.id === id) || list.find((x) => x.isDefault) || list[0] || null;
+  const want = id == null ? '' : String(id); // dataset 是字符串，配置 id 可能是数字
+  return list.find((x) => String(x.id) === want) || list.find((x) => x.isDefault) || list[0] || null;
 }
 
+/** 盘信息优先用站点给的 plateList；没给的（创想云）点开再读本地 3mf（服务端有缓存）。 */
 function platesPanel(m, profileId) {
   const prof = activeProfile(m, profileId);
-  const plates = prof?.plateList?.length ? prof.plateList : m.print?.plateList || [];
-  if (!plates.length) return '';
-  const nozzle = prof?.nozzle || m.print?.nozzle || '';
+  const plates = prof ? prof.plateList || [] : m.print?.plateList || [];
+  if (plates.length) return platesHtml(m, plates, prof);
+  if (!prof?.filePath) return '';
+  return `<section class="panel" id="plates-panel" data-inspect="${esc(prof.filePath)}" data-name="${esc(prof.name || '')}">
+    <h2>打印盘 · ${esc(prof.name || '')}</h2>
+    <div class="sub"><span class="spin"></span> 正在读本地 3mf…</div>
+  </section>`;
+}
+
+function platesHtml(m, plates, prof) {
+  const nozzle = prof?.nozzle || '';
+  // 盘图三种来源：站点原图（http）、派生缓存（/preview/…）、库目录里的相对路径
+  const src = (t) => (String(t).startsWith('http') || String(t).startsWith('/') ? String(t) : `/library/${m.dir}/${t}`);
   return `<section class="panel" id="plates-panel">
-    <h2>打印盘 · ${plates.length}${prof ? ` · ${esc(prof.name)}` : ''}</h2>
+    <h2>打印盘 · ${plates.length}${prof?.name ? ` · ${esc(prof.name)}` : ''}</h2>
     ${nozzle ? `<div class="pmeta" style="margin:-4px 0 10px">喷嘴 ${esc(nozzle)}</div>` : ''}
     <div class="plates">${plates
       .map(
         (pl) => `<div class="plate">
-          ${pl.thumb ? `<img src="${esc(pl.thumb.startsWith('http') ? pl.thumb : `/library/${m.dir}/${pl.thumb}`)}" alt="" loading="lazy">` : '<div class="ph"></div>'}
+          ${pl.thumb ? `<img src="${esc(src(pl.thumb))}" alt="" loading="lazy">` : '<div class="ph"></div>'}
           <div class="pb">
             <div class="pt">${esc(pl.name || '打印盘')}</div>
             <div class="pm">${[fmtH(pl.timeSec), fmtG(pl.weightG)].filter(Boolean).map(esc).join(' · ') || '—'}</div>
@@ -812,6 +747,24 @@ function platesPanel(m, profileId) {
       )
       .join('')}</div>
   </section>`;
+}
+
+/** 占位面板 → 读 3mf 里的盘（/api/inspect 只认 files/ 下的裸文件名）。 */
+async function loadPlates(m) {
+  const panel = document.getElementById('plates-panel');
+  if (!panel || !panel.dataset.inspect) return;
+  const file = panel.dataset.inspect.split('/').pop();
+  const name = panel.dataset.name || '';
+  try {
+    const r = await fetch(`/api/inspect?dir=${encodeURIComponent(m.dir)}&file=${encodeURIComponent(file)}`);
+    const info = await r.json();
+    if (info.error) throw new Error(info.error);
+    const plates = info.plates || [];
+    if (!plates.length) throw new Error('这个 3mf 里没有打印盘');
+    document.getElementById('plates-slot').innerHTML = platesHtml(m, plates, { name });
+  } catch (e) {
+    panel.innerHTML = `<h2>打印盘${name ? ` · ${esc(name)}` : ''}</h2><div class="sub">读不出来：${esc(e.message)}</div>`;
+  }
 }
 
 // ── 文档（配套组装说明）────────────────────────────────────────
@@ -848,16 +801,24 @@ function wireMachineFilter() {
   apply();
 }
 
-// 点配置行 → 只换打印盘面板
+// 点配置行 → 打印盘和下方按钮都跟着换（只换这两块，别整页重绘）
 function wireProfileSwitch(m) {
   document.querySelectorAll('.prow2[data-profile]').forEach((row) => {
     row.addEventListener('click', (e) => {
       if (e.target.closest('a')) return;
       const id = row.dataset.profile;
       document.querySelectorAll('.prow2').forEach((r) => r.classList.toggle('on', r === row));
-      const panel = document.getElementById('plates-panel');
-      const html = platesPanel(m, id);
-      if (panel) panel.outerHTML = html || '';
+      const prof = activeProfile(m, id);
+      document.getElementById('plates-slot').innerHTML = platesPanel(m, id);
+      document.getElementById('pact').innerHTML = actionBar(m, prof);
+      loadPlates(m);
     });
   });
+}
+
+// 发送到打印机：按钮先摆着，功能待做（spec §9.3）
+function wirePrinterButton() {
+  const btn = document.getElementById('send-printer');
+  if (!btn) return;
+  btn.addEventListener('click', () => setStatus('发送到打印机：功能还没做，先记着'));
 }

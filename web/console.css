@@ -130,9 +130,13 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
 .hit .hm { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: 12px; color: var(--dim); }
 
 /* 表单 */
-.form { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; }
+.form { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+/* 订阅表单浮在页面上会和清单、详情框混成一片，给它一张卡片 */
+#sub-form { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 16px 18px; }
 .field { display: flex; flex-direction: column; gap: 5px; }
 .field.wide { grid-column: 1 / -1; }
+/* .field 是纵向 flex，子按钮会被拉满一行宽 */
+.field > .btn { align-self: flex-start; }
 .field > label { font-size: 12.5px; color: #5f6673; }
 .field input[type="text"], .field input[type="number"], .field input[type="password"], .field select, .field textarea {
   height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px;
@@ -229,7 +233,7 @@ td.time { color: #5f6673; white-space: nowrap; font-variant-numeric: tabular-num
 .chip.on { background: #17191d; border-color: #17191d; color: #fff; }
 .timeline { background: #fff; border: 1px solid var(--line); border-radius: 14px; padding: 6px 14px; }
 .log-row {
-  display: grid; grid-template-columns: 90px 84px 108px minmax(0, 1fr);
+  display: grid; grid-template-columns: 74px 56px 96px minmax(0, 1.1fr) minmax(0, 1.5fr);
   gap: 10px; align-items: baseline; padding: 8px 0;
   border-bottom: 1px dashed var(--line); font-size: 13.5px;
 }

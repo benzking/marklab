@@ -191,7 +191,7 @@ export async function fileLinks(model) {
       (await fetch(c.url, { method: 'HEAD' })
         .then((r) => r.ok && Number(r.headers.get('content-length')) === c.size)
         .catch(() => false));
-    if (ok) out.push({ name: `${model.title || 'model'}${it.machine ? '-' + it.machine : ''}.3mf`, url: c.url, size: c.size, mine: it.mine });
+    if (ok) out.push({ name: `${model.title || 'model'}${it.machine ? '-' + it.machine : ''}.3mf`, url: c.url, size: c.size, mine: it.mine, profileId: it.id });
     else rest.push(it);
   }
 
@@ -210,7 +210,7 @@ export async function fileLinks(model) {
           continue;
         }
         const j = await r.json();
-        if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine });
+        if (j && j.url) out.push({ name: j.name, url: j.url, size: j.size, mine, profileId: id });
       }
       return { out, errs };
     })()`;
@@ -233,6 +233,7 @@ export async function fileLinks(model) {
     size: r.size,
     kind: 'profile',
     origin: r.mine ? 'author' : 'other',
+    profileId: r.profileId,
   }));
 }
 

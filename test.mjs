@@ -1323,3 +1323,33 @@ test('订阅：跨站合并的键与站点到达顺序无关，sources 带来源
     'sources[] 每条都要带来源规则（spec §6.2）',
   );
 });
+
+test('配置 → 本地 3mf：profileId 优先，其次名字，最后才一对一', async () => {
+  const { profileFile } = await import('./lib.mjs');
+  const files = [
+    { kind: 'profile', name: 'A.3mf', path: 'files/01-A.3mf', profileId: 'p1' },
+    { kind: 'profile', name: 'B.3mf', path: 'files/02-B.3mf', profileId: 2 },
+  ];
+  const model = { profiles: [{ id: 'p1' }, { id: 2 }, { id: 'p3' }], savedFiles: files };
+  assert.equal(profileFile(model, model.profiles[0]).path, 'files/01-A.3mf', '字符串 id 精确对上');
+  assert.equal(profileFile(model, model.profiles[1]).path, 'files/02-B.3mf', '数字 id 也要对上（=== 会挂在这）');
+  assert.equal(profileFile(model, model.profiles[2]), null, '对不上就是 null，不许按顺序硬配');
+
+  // 老库没有 profileId：靠名字精确相等
+  const old = { profiles: [{ id: 'x', name: '0.2mm layer' }], savedFiles: [{ kind: 'profile', name: '0.2mm layer.3mf', path: 'files/01-x.3mf' }] };
+  assert.equal(profileFile(old, old.profiles[0]).path, 'files/01-x.3mf');
+
+  // 一对一：只有一个配置一个文件时可以直接认
+  const one = { profiles: [{ id: 'y', name: '别的名字' }], savedFiles: [{ kind: 'profile', name: 'model.3mf', path: 'files/01-m.3mf' }] };
+  assert.equal(profileFile(one, one.profiles[0]).path, 'files/01-m.3mf');
+});
+
+test('配置的作者标识：各站字段不同，没字段就不猜', async () => {
+  const { profileByAuthor } = await import('./lib.mjs');
+  assert.equal(profileByAuthor({}, { isAuth: true }), true, '创想云 isAuth');
+  assert.equal(profileByAuthor({}, { isAuth: false }), false);
+  assert.equal(profileByAuthor({}, { isAuthor: 0 }), false, 'MakerOnline isAuthor');
+  assert.equal(profileByAuthor({ authorUid: 7 }, { creatorUid: 7 }), true, 'MakerWorld 比 creatorUid');
+  assert.equal(profileByAuthor({ authorUid: '7' }, { creatorUid: 8 }), false);
+  assert.equal(profileByAuthor({ authorUid: 7 }, { name: 'x' }), null, '没字段返回 null，界面不显示');
+});

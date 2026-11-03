@@ -74,20 +74,20 @@
         </div>
       </div>
       <div class="err" id="subs-err" hidden></div>
-      <div class="split">
-        <div class="col-list">
-          <div id="sub-list"><p class="muted small">加载中…</p></div>
-        </div>
-        <div class="col-detail" id="sub-detail">
-          <p class="muted small">左边点一条订阅看详情，或点右上角新建。</p>
-        </div>
-      </div>
 
+      <!-- 表单放在清单上面：展开时不会被长清单顶到屏幕外 -->
       <form class="form" id="sub-form" hidden>
         <input type="hidden" id="f-id" name="id">
         <div class="field">
           <label for="f-name">名称</label>
           <input id="f-name" name="name" type="text" placeholder="如：可动关节">
+        </div>
+        <div class="field">
+          <label for="f-kind">类型</label>
+          <select id="f-kind" name="kind">
+            <option value="keyword">关键字订阅（搜索 + 匹配）</option>
+            <option value="author">作者订阅（他发的全下）</option>
+          </select>
         </div>
         <div class="field wide" data-kind="keyword">
           <label for="f-kw">关键字（逗号分隔）</label>
@@ -96,13 +96,6 @@
         <div class="field wide" data-kind="author" hidden>
           <label for="f-users">作者主页（每行一个链接）</label>
           <textarea id="f-users" name="users" rows="2" placeholder="https://makerworld.com.cn/zh/@youngzhen&#10;https://space.snapmaker.cn/zh/creator/11307"></textarea>
-        </div>
-        <div class="field">
-          <label for="f-kind">类型</label>
-          <select id="f-kind" name="kind">
-            <option value="keyword">关键字订阅（搜索 + 匹配）</option>
-            <option value="author">作者订阅（他发的全下）</option>
-          </select>
         </div>
         <div class="field wide" data-kind="keyword">
           <label>候选规则（站点 + 排序 + 前 N 条，每条规则搜一遍）</label>
@@ -141,8 +134,18 @@
         <div class="form-foot">
           <button class="btn primary" type="submit" id="sub-submit">新建订阅</button>
           <button class="btn" type="button" id="sub-cancel">取消</button>
+          <span class="note" id="sub-form-note"></span>
         </div>
       </form>
+
+      <div class="split">
+        <div class="col-list">
+          <div id="sub-list"><p class="muted small">加载中…</p></div>
+        </div>
+        <div class="col-detail" id="sub-detail">
+          <p class="muted small">左边点一条订阅看详情，或点右上角新建。</p>
+        </div>
+      </div>
     </section>
 
     <!-- 运行日志 -->
@@ -153,8 +156,8 @@
       </div>
       <div class="chips" id="log-chips">
         <button class="chip on" type="button" data-type="all">全部</button>
-        <button class="chip" type="button" data-type="queue">抓取队列</button>
-        <button class="chip" type="button" data-type="subscribe">订阅命中</button>
+        <button class="chip" type="button" data-type="queue">抓取</button>
+        <button class="chip" type="button" data-type="subscribe">订阅</button>
         <button class="chip" type="button" data-type="tag">智能标签</button>
         <button class="chip" type="button" data-type="dup">判重</button>
       </div>

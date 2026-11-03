@@ -226,7 +226,7 @@ if (wantFiles) {
       // 单个文件失败不拖累其余：48 个 STL 的模型不能因为第 3 个挂了就全丢
       try {
         const { bytes, sha256 } = await download(f.url, path.join(filesDir, name), site);
-        saved.push({ name: f.name, path: `files/${name}`, bytes, sha256, kind: f.kind || 'model', origin: f.origin || 'author' });
+        saved.push({ name: f.name, path: `files/${name}`, bytes, sha256, kind: f.kind || 'model', origin: f.origin || 'author', profileId: f.profileId });
         console.log(`  ✓ ${f.name} (${(bytes / 1048576).toFixed(1)} MB)`);
       } catch (e) {
         linkErr = e.message;

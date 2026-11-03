@@ -3,11 +3,11 @@
 
 const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', 'makeronline.cn': 'MakerOnline 国内', 'makeronline.com': 'MakerOnline 国际' };
 const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', 'makeronline.cn': '#ff7d00', 'makeronline.com': '#ff7d00' };
-const PHASE = { queued: '排队中', fetching: '取页中', parsing: '解析中', downloading: '下载中', done: '已完成', failed: '失败', interrupted: '中断', duplicate: '重复' };
+const PHASE = { queued: '排队中', fetching: '取页中', parsing: '解析中', downloading: '下载中', done: '已完成', failed: '失败', interrupted: '中断', duplicate: '重复', run: '跑一轮', hit: '命中', stopped: '已停止' };
 const SOURCE = { manual: '手动', refetch: '补抓', subscribe: '订阅', bulk: '批抓' };
 const ACTIVE = new Set(['queued', 'fetching', 'parsing', 'downloading']);
 // 搜索排序键 → 人话（键的并集见 sites/contract.mjs SORTS）
-const SORT_LABEL = { downloads: '按下载', likes: '按点赞', collects: '按收藏', newest: '按最新', hot: '按热门', score: '按评分' };
+const SORT_LABEL = { trend: '综合趋势', downloads: '按下载', likes: '按点赞', collects: '按收藏', newest: '按最新', hot: '按热门', score: '按相关性', views: '浏览数', prints: '打印数' };
 const sortName = (s) => SORT_LABEL[s] || s || '默认序';
 const MATCH_LABEL = { name: '按名字', tag: '按标签' };
 const DECISION = { queued: '已入队', 'no-match': '名字没命中', threshold: '没过门槛', 'in-library': '库里已有', 'in-queue': '已在队列' };
@@ -739,7 +739,8 @@ async function openSubForm(sub) {
     f.elements.pickedOnly.checked = Boolean(sub.pickedOnly);
     f.elements.enabled.checked = sub.enabled !== false;
   }
-  f.scrollIntoView({ block: 'nearest' });
+  window.scrollTo({ top: 0 }); // 表单在清单上面，编辑时得先回到页首
+  flash('#sub-form-note', '');
 }
 
 function formRules(f) {
@@ -764,15 +765,15 @@ async function submitSub(e) {
   let body;
   if (kind === 'author') {
     const users = String(el('users').value || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
-    if (!users.length) return flash('#sub-note', '作者订阅至少填一个作者主页链接', true);
+    if (!users.length) return flash('#sub-form-note', '作者订阅至少填一个作者主页链接', true);
     body = { name: name || '作者订阅', kind, users, intervalHours, enabled };
   } else {
     const keywords = String(el('keywords').value || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
     const rules = formRules(f);
     const matchModes = [...f.querySelectorAll('input[name="match"]:checked')].map((i) => i.value);
-    if (!keywords.length) return flash('#sub-note', '关键字订阅至少填一个关键字', true);
-    if (!rules.length) return flash('#sub-note', '关键字订阅至少要一条候选规则（站点 + 排序 + 前 N 条）', true);
-    if (!matchModes.length) return flash('#sub-note', '至少勾一种匹配方式（按名字 / 按标签）', true);
+    if (!keywords.length) return flash('#sub-form-note', '关键字订阅至少填一个关键字', true);
+    if (!rules.length) return flash('#sub-form-note', '关键字订阅至少要一条候选规则（站点 + 排序 + 前 N 条）', true);
+    if (!matchModes.length) return flash('#sub-form-note', '至少勾一种匹配方式（按名字 / 按标签）', true);
     body = {
       name: name || keywords[0],
       kind,
@@ -802,9 +803,9 @@ async function submitSub(e) {
   }
 }
 
-// ── 运行日志（四类事件一条时间轴）──────────────────────────────
+// ── 运行日志（一条时间轴，带历史：ADR-0007）────────────────────
 let logType = 'all';
-const LOG_TAG = { queue: '抓取队列', subscribe: '订阅命中', tag: '智能标签', dup: '判重' };
+const LOG_TAG = { queue: '抓取', subscribe: '订阅', tag: '智能标签', dup: '判重' };
 
 function logRow(e) {
   const title = e.url
@@ -1195,7 +1196,7 @@ $('#rule-rows').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-del-rule]');
   if (!btn) return;
   if ($('#rule-rows').querySelectorAll('.rule-row').length <= 1) {
-    flash('#sub-note', '关键字订阅至少留一条规则', true);
+    flash('#sub-form-note', '关键字订阅至少留一条规则', true);
     return;
   }
   btn.closest('.rule-row').remove();

@@ -186,13 +186,13 @@
 
 ```js
 searchOptions: {
-  sorts: ['downloads', 'likes', 'collects', 'newest'], // 有序：第一项 = 该站默认序；[] = 本站不支持排序
+  sorts: ['trend', 'newest', 'views', 'likes', 'collects', 'downloads', 'prints'], // 有序：第一项 = 该站默认序；[] = 本站不支持排序
   tags: false,                                         // 必填：搜索结果带不带标签
   pageSize: 20,                                        // 可选：站点页大小固定时写死，调用方别指望改
 }
 ```
 
-- 排序键并集（`contract.mjs` 的 `SORTS`）：`downloads` / `likes` / `collects` / `newest` / `hot` / `score`。
+- 排序键并集（`contract.mjs` 的 `SORTS`）：`downloads` / `likes` / `collects` / `newest` / `hot` / `score` / `views` / `prints` / `trend`（后三个目前只有创想云支持）。
   新增键先加进并集，再用。
 - **`tags` 必填**：本站搜索结果是否自带标签。没有标签就写 `false`——订阅端据此灰掉 tag 勾选框
   （`docs/spec.md` §6.2），不许靠猜。站点只给译名（Snapmaker 的 `translatedTags`）时由包自己归到 `tags`。
@@ -212,7 +212,7 @@ searchOptions: {
 | `meta` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ |
 | `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ |
 | `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ |
-| `searchOptions.sorts` | downloads, likes, collects, newest | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） |
+| `searchOptions.sorts` | trend, newest, views, likes, collects, downloads, prints | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） |
 | `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ |
 | 页大小固定 | 否 | **20** | 否 | 否 | 否 |
 | `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ |

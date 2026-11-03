@@ -80,9 +80,9 @@ export async function checkin({ dry = false } = {}) {
   const api = await checkinApi();
   const before = checkinPlan(await api('/api/user/integral/check-in-task-config'));
   // 形状跟 checkinStatus().checkin 完全一样：一个语义只有一种形状（site-pack.md §11.1）
+  // 不报 streak：站上只有「7 天一轮走到第几天」，报成连签就是假话（见 checkinStatus）
   const done = (signed, extra = {}) => ({
     signed,
-    ...(before.day ? { streak: before.day } : {}),
     ...(signed && Number.isFinite(num(before.integral)) ? { gain: num(before.integral) } : {}),
     ...extra,
   });
@@ -95,7 +95,7 @@ export async function checkin({ dry = false } = {}) {
   return done(true, after.signed ? {} : { note: '回读没看到今天的记录，站点可能改了接口' });
 }
 
-/** 积分余额 + 签到状态（控制台卡片第二行）。`streak` 是 7 天周期走到第几天，不是累计连签。 */
+/** 积分余额 + 签到状态（控制台卡片第二行）。不报 `streak`：站上只有 7 天周期走到第几天，不是累计连签。 */
 export async function checkinStatus() {
   const api = await checkinApi();
   const plan = checkinPlan(await api('/api/user/integral/check-in-task-config'));
@@ -104,7 +104,6 @@ export async function checkinStatus() {
     ...(Number.isFinite(num(integral)) ? { points: num(integral) } : {}),
     checkin: {
       signed: plan.signed,
-      streak: plan.day || 0,
       ...(plan.signed && Number.isFinite(num(plan.integral)) ? { gain: num(plan.integral) } : {}),
       ...(plan.reason ? { note: plan.reason } : {}),
     },
@@ -264,6 +263,7 @@ export function downloadJobs(detail, id) {
         name: f.file_name || `${p.title || 'profile'}.3mf`,
         kind: 'profile',
         origin: p.is_author ? 'author' : 'other',
+        profileId: p.id,
         body: { key: f.key, file_type: 2, is_batch_down: 0, print_profile_id: p.id },
       })),
     ),
@@ -299,7 +299,7 @@ export async function fileLinks(model) {
     const objectPath = r.data.split('?')[0];
     if (seen.has(objectPath)) continue;
     seen.add(objectPath);
-    out.push({ name: j.name, url: r.data, kind: j.kind, origin: j.origin });
+    out.push({ name: j.name, url: r.data, kind: j.kind, origin: j.origin, profileId: j.profileId });
   }
   if (bad.length) console.warn(`  文件直链没拿到 ${bad.length} 个：${bad[0]}`);
   if (!out.length) throw new Error(`站点没给文件直链（${bad[0]}）`);

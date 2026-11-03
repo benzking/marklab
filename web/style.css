@@ -289,30 +289,6 @@ h1.dt { font-size: 24px; line-height: 1.34; margin: 0 0 10px; }
 .btn-ghost:hover { border-color: #cfd4dd; text-decoration: none; }
 .danger { color: #c2410c; border-color: #f6d3c4; }
 
-/* 文件选择 + 预览 */
-.filepick { display: flex; flex-direction: column; gap: 6px; }
-.fpick {
-  display: flex; justify-content: space-between; align-items: center; gap: 10px;
-  width: 100%; text-align: left; padding: 9px 12px; background: #fff;
-  border: 1px solid var(--line); border-radius: 8px; cursor: pointer; font: inherit;
-}
-.fpick:hover { border-color: #cfd4dd; }
-.fpick.on { border-color: var(--accent); background: #f4fdf8; box-shadow: inset 0 0 0 1px var(--accent); }
-.fpick .fname { font-size: 13.5px; font-weight: 600; color: var(--fg); overflow-wrap: anywhere; }
-.fpick .fmeta { font-size: 12px; color: var(--dim); white-space: nowrap; }
-.fpick[data-missing] .fname { color: #c2410c; }
-.fpreview { margin-top: 12px; }
-.pstats { display: flex; flex-wrap: wrap; gap: 14px; font-size: 12.5px; color: #4b5160; margin-bottom: 10px; }
-.pstats span { display: inline-flex; align-items: center; gap: 5px; }
-.pstats svg { width: 14px; height: 14px; color: var(--dim); }
-.pgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
-.pitem { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: #fff; }
-.pitem img, .pitem .ph { display: block; width: 100%; aspect-ratio: 1; object-fit: contain; background: #f7f8fa; }
-.pitem figcaption { padding: 7px 9px 9px; display: flex; flex-direction: column; gap: 2px; }
-.pitem b { font-size: 12.5px; font-weight: 600; line-height: 1.35; }
-.pitem span { font-size: 11.5px; color: var(--dim); }
-.fdload { margin-top: 12px; }
-
 /* 打印配置列表 + 悬浮窗 */
 .plist { display: flex; flex-direction: column; gap: 8px; }
 .prow2 {
@@ -328,8 +304,27 @@ h1.dt { font-size: 24px; line-height: 1.34; margin: 0 0 10px; }
 .psub { display: flex; flex-wrap: wrap; gap: 10px; font-size: 12px; color: var(--dim); margin-top: 3px; }
 .psub span { display: inline-flex; align-items: center; gap: 4px; }
 .psub svg { width: 12px; height: 12px; }
+/* 作者徽标：只有作者自己做的配置才标（别人的配置不标，标了全是噪音） */
+.psub .byauthor { color: #12864f; font-weight: 600; }
+.psub .byauthor svg { width: 12px; height: 12px; }
+
+/* 配置卡下方那条按钮：发送到打印机（待做）+ 下载 3MF */
+.pact { margin-top: 10px; }
+.pact-row { display: flex; gap: 8px; }
+.pact-row > * { flex: 1; }
+.btn-main {
+  display: inline-flex; align-items: center; justify-content: center; gap: 6px;
+  padding: 9px 14px; border-radius: 8px; border: 1px solid var(--accent);
+  background: var(--accent); color: #fff; font-size: 13.5px; font-weight: 600; text-decoration: none;
+}
+.btn-main:hover { filter: brightness(1.05); }
+.btn-main svg { width: 14px; height: 14px; }
+.origline { font-size: 12.5px; color: var(--dim); margin-top: 12px; line-height: 1.7; }
+.origline a { color: inherit; }
 
 .pop {
+  /* 只是提示，不吃鼠标：否则浮层盖住下一行，点不到别的配置 */
+  pointer-events: none;
   display: none; position: absolute; left: 0; top: calc(100% + 6px); z-index: 40; width: 340px;
   background: #fff; border: 1px solid var(--line); border-radius: 10px; padding: 12px;
   box-shadow: 0 8px 24px rgba(20, 24, 40, .12); max-height: 380px; overflow: auto;
@@ -346,15 +341,12 @@ h1.dt { font-size: 24px; line-height: 1.34; margin: 0 0 10px; }
 .pop-machines .lbl { font-size: 11.5px; color: var(--dim); }
 .pop-machines .machine { font-size: 11.5px; color: #5b616e; border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; }
 .pop-machines .machine.more { color: var(--dim); border-style: dashed; }
-.siteonly { margin: 8px 0 4px; }
 /* 同模型链接：判重只记 data/duplicates.json，库里不复制文件，这里给一条能追回去的线 */
 .same { margin-top: 12px; padding-top: 10px; border-top: 1px dashed var(--line); }
 .same h3 { font-size: 12px; font-weight: 600; color: var(--dim); margin: 0 0 6px; }
 .same a { display: block; font-size: 12.5px; padding: 3px 0; }
 
-.pop-link { display: inline-block; margin-top: 8px; font-size: 12px; }
 /* 文件多的时候（创想云一个模型能拆几十个 STL）限高滚动 */
-.filepick { max-height: 340px; overflow: auto; padding-right: 2px; }
 
 /* 大模型标签：和站点标签区分开，一眼看得出是机器打的 */
 .tag.ai {

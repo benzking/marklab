@@ -9,8 +9,9 @@
 import http from 'node:http';
 import { readFile, readdir, rm, stat, mkdir } from 'node:fs/promises';
 import { inspectFile, PREVIEW_ROOT } from './inspect.mjs';
-import { catIndex, catOf, checkinText, inside, writeJson, ROOT } from './lib.mjs';
+import { catIndex, catOf, checkinText, inside, profileByAuthor, profileFile, writeJson, ROOT } from './lib.mjs';
 import { match as matchSite, byName as packOf } from './sites/index.mjs';
+import * as events from './events.mjs';
 import * as tasks from './tasks.mjs';
 import * as stats from './stats.mjs';
 import * as subs from './subs.mjs';
@@ -119,6 +120,13 @@ async function hydrate(dirName, model) {
     }
   }
   delete model.fileIds;
+  // 配置 → 本地 3mf：前端只认这个派生字段，不自己按顺序猜（spec §4.2）
+  for (const p of model.profiles || []) {
+    const f = profileFile(model, p);
+    if (f) p.filePath = f.path;
+    const byAuthor = profileByAuthor(model, p);
+    if (byAuthor != null) p.byAuthor = byAuthor;
+  }
   return model;
 }
 
@@ -144,6 +152,35 @@ function linkDups(m, dups, byKey) {
 
 // 判重标记怎么念：同站命中是「确认」，跨站只有撞了 sha256 才算确认，其余是「疑似」
 const DUP_LABEL = { same: '同站同标题同作者（确认）', hash: '跨站作者件字节相同（确认）', meta: '跨站标题+作者相同（疑似）' };
+
+// 候选调度器四道闸的判定怎么念（subs.decide 的返回值）
+const DECIDE_LABEL = { queued: '入队', threshold: '没到门槛', 'no-match': '没匹配', 'in-library': '库里已有', 'in-queue': '已在队列' };
+
+/** events.jsonl 的一行 → 运行日志的一行；返回 null 表示这类事件不上日志页。 */
+function logRow(e) {
+  const base = { at: e.ts, site: e.site || null, title: e.title || e.url || '', url: e.url || '' };
+  if (e.kind === 'subs-run') {
+    const blocked = Object.entries(e.decisions || {})
+      .filter(([k]) => k !== 'queued')
+      .map(([k, v]) => `${DECIDE_LABEL[k] || k} ${v}`)
+      .join(' · ');
+    return {
+      ...base,
+      type: 'subscribe',
+      title: e.subName || e.sub || '订阅',
+      state: e.error ? 'failed' : e.stopped ? 'stopped' : 'run',
+      detail: `搜 ${e.searched || 0} 次 · 候选 ${e.candidates || 0} · 入队 ${e.matched || 0}${blocked ? ` · 挡下 ${blocked}` : ''}${e.error ? ` · ${e.error}` : ''}`,
+    };
+  }
+  if (e.kind === 'subs-candidate')
+    return { ...base, type: 'subscribe', state: e.taskId ? 'queued' : 'hit', detail: `${e.subName || e.sub || '订阅'} · 赞 ${e.likes || 0} 下载 ${e.downloads || 0}` };
+  if (e.kind === 'task-queued')
+    return { ...base, type: 'queue', title: e.title || e.url || '', state: 'queued', detail: e.source === 'subscribe' ? '订阅命中入队' : e.source === 'bulk' ? '批量入队' : '手动入队' };
+  if (e.kind === 'task-file')
+    return { ...base, type: 'queue', state: 'downloading', detail: `${e.done || 0}/${e.total || 0} 个文件 · ${e.name || ''}`.trim() };
+  if (e.kind === 'task-done') return { ...base, type: 'queue', state: e.phase || 'done', detail: e.error || '' };
+  return null;
+}
 
 // 列表只发卡片字段：641 个模型连 description/rawFiles 一起发是 5.5MB，每次搜索都传一遍太贵。
 // 详情页点开时再按 dir 拉一份完整的（GET /api/model?dir=）。
@@ -259,7 +296,13 @@ const server = http.createServer(async (req, res) => {
   try {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     // 放在 try 里面：畸形的 % 编码会抛 URIError，接不住就是进程直接死
-    const p = decodeURIComponent(url.pathname);
+    // 客户端可能送来没编码的 % （老缓存里的 /preview/…15%-infill/…）：解不开就当原样用，别 500
+    let p;
+    try {
+      p = decodeURIComponent(url.pathname);
+    } catch {
+      p = url.pathname;
+    }
 
     if (p === '/api/models') return json(res, 200, (await listModels()).map(slim));
     if (p === '/api/model' && req.method === 'GET') {
@@ -491,37 +534,17 @@ const server = http.createServer(async (req, res) => {
 
     if (p === '/api/console/dups') return json(res, 200, await dup.marks());
 
-    // 控制台「运行日志」页：四类事件合成一条时间轴，前端按 type 筛选。
-    // 不落单独的日志文件——队列/订阅/判重各自已经有落盘记录，这里只做合并，少一处要维护的真相。
+    // 控制台「运行日志」页：一条时间轴，前端按 type 筛选。
+    // 队列与订阅要历史 → 读 data/events.jsonl（ADR-0007）；标签/判重各自有落盘，现合并。
     if (p === '/api/console/events') {
       const type = url.searchParams.get('type') || 'all';
       const limit = Math.min(500, Number(url.searchParams.get('limit')) || 200);
       const want = (t) => type === 'all' || type === t;
       const out = [];
-      if (want('queue')) {
-        for (const t of tasks.list({ limit })) {
-          out.push({
-            at: t.createdAt,
-            type: 'queue',
-            site: t.site || matchSite(t.url)?.site || null,
-            title: t.title || t.url,
-            url: t.url,
-            state: t.phase,
-            detail: t.error || t.warning || (t.progress && t.progress.total ? `${t.progress.done}/${t.progress.total} 个文件` : ''),
-          });
-        }
-      }
-      if (want('subscribe')) {
-        for (const h of await subs.allHits(limit)) {
-          out.push({
-            at: h.matchedAt,
-            type: 'subscribe',
-            site: h.site,
-            title: h.title || h.id,
-            url: h.url,
-            state: h.taskId ? 'queued' : 'hit',
-            detail: `${h.subName || h.subId || '订阅'} · 赞 ${h.likes || 0} 下载 ${h.downloads || 0}`,
-          });
+      if (want('queue') || want('subscribe')) {
+        for (const e of events.recent(limit)) {
+          const row = logRow(e);
+          if (row && want(row.type)) out.push(row);
         }
       }
       if (want('tag')) {

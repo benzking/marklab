@@ -46,6 +46,7 @@
 `inspect.mjs`（3mf/stl 预览，自读 zip）· `lib.mjs`（纯函数：站点识别 / Nuxt 还原 / 清洗）·
 `channel.mjs`（浏览器通道：登录态 + 真浏览器取页，唯一入口；标签页也只在它这里开和关）· `session.mjs`（四站登录态探测）·
 `tasks.mjs`（抓取任务队列，全局串行）· `stats.mjs`（工作台数据）· `subs.mjs`（订阅）·
+`events.mjs`（运行日志：`data/events.jsonl` 追加写、5 MB 轮转，见 ADR-0007）·
 `ipwatch.mjs`（高风控 IP 词表 → 订阅，读 `data/ipwatch.json`）·
 `search.mjs`（四站搜索，匿名；频率默认 4 次/分，可按站覆盖；站点不支持的排序键回落该站默认序）· `dup.mjs`（重复检测）· `llm.mjs`（大模型打标签）·
 `cats.mjs`（四站 1/2 级分类 + 对照表）· `checkin.mjs`（签到：创想云 + MakerOnline.cn，各站在包里实现 `checkin()` / `checkinStatus()`；`startAuto()` 每 10 分钟探一次自动签）·

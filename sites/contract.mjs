@@ -22,7 +22,7 @@ export const FILE_KINDS = ['model', 'profile', 'doc'];
 export const ORIGINS = ['author', 'other'];
 // 排序键的并集。每个包在自己的 searchOptions.sorts 里声明支持哪几个，
 // 顺序有意义：第一项是该站默认序。空数组 = 本站不支持排序（只能相关度）。
-export const SORTS = ['downloads', 'likes', 'collects', 'newest', 'hot', 'score'];
+export const SORTS = ['downloads', 'likes', 'collects', 'newest', 'hot', 'score', 'views', 'prints', 'trend'];
 
 // meta() 必须给出的键（fetchedAt / savedFiles / autoTags / dir 由 grab.mjs 补，不在这里）
 export const META_KEYS = ['platform', 'id', 'sourceUrl', 'title', 'author', 'description', 'images', 'stats', 'profiles', 'print', 'category', 'tags'];

@@ -305,7 +305,7 @@ async function profileLinks(model, token, uid) {
       continue;
     }
     const mine = !model.authorUid || String(p.uid) === String(model.authorUid);
-    out.push({ name: profileName(p), url, size: p.size, kind: 'profile', origin: mine ? 'author' : 'other' });
+    out.push({ name: profileName(p), url, size: p.size, kind: 'profile', origin: mine ? 'author' : 'other', profileId: p.id });
   }
   if (!out.length && authErr) throw new Error(`3mfDownload 拒绝（4 ${authErr}）：先在浏览器重新登录创想云`);
   return { out, missed };
@@ -366,9 +366,10 @@ export function normalize(raw) {
   };
 }
 
-// 实测（2026-10-31，20 条一页看单调性）：7 下载 / 1 点赞 / 2 收藏 / 3 最新；
-// 不传（以及 0/4/8/10/11/12/13/14）都是站点默认综合序，5/6/9 会换序但语义未确认，别用。
-const SORT_TYPE = { downloads: 7, likes: 1, collects: 2, newest: 3 };
+// 实测（2026-11-03，点站点搜索页 8 个排序标签抓 sortType）：0 综合趋势（不传等价）/ 3 最新 / 9 浏览数 /
+// 1 点赞 / 2 收藏 / 7 下载 / 6 打印。12 助力数站点标签发了也不换序（4 个关键词 + 界面点击都比对过），别加；
+// 5 未确认。0/4/8/10/11/13/14 都是默认综合序。
+const SORT_TYPE = { trend: 0, newest: 3, views: 9, likes: 1, collects: 2, downloads: 7, prints: 6 };
 
 export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const r = await fetch(`${SITE}/api/cxy/smart_search/v1/model`, {
@@ -454,7 +455,7 @@ const pack = {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: false },
+  searchOptions: { sorts: Object.keys(SORT_TYPE), tags: false }, // 声明与映射同源，少一处漂移
   search,
   userModels,
 };

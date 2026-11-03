@@ -5,6 +5,7 @@ import { spawn } from 'node:child_process';
 import { appendFile, mkdir, open, readFile, rename, stat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { ROOT, writeJson } from './lib.mjs';
+import * as events from './events.mjs';
 import { all as allPacks, byName, match as matchSite } from './sites/index.mjs';
 
 const TASKS_DIR = path.join(ROOT, 'data', 'tasks');
@@ -358,6 +359,7 @@ export function enqueue({ url, source = 'manual', dir = null, subId = null }) {
   else lane.push(task);
   if (source === 'manual') jumpTo(task);
   persist(task).catch(() => {});
+  events.emit('task-queued', { id, url, site: task.site, source, subId, lane: task.site || 'default' });
   saveState().catch(() => {});
   pump();
   return { task: { ...task }, done };
@@ -386,6 +388,16 @@ function finish(task, ok, error, phase) {
   }
   saveState().catch(() => {}); // 闸门持久化：重启后别立刻放行
   persist(task).catch(() => {});
+  events.emit('task-done', {
+    id: task.id,
+    url: task.url,
+    site: task.site,
+    title: task.title,
+    phase: task.phase,
+    ok,
+    error: task.error,
+    ms: task.startedAt ? Math.max(0, Date.parse(task.endedAt) - Date.parse(task.startedAt)) : 0,
+  });
   for (const fn of finishHooks) {
     try {
       fn(task);
@@ -440,6 +452,8 @@ function handleLine(task, line) {
   if (ev.dir) task.dir = ev.dir;
   if (ev.done != null || ev.total != null) {
     task.progress = { done: ev.done ?? task.progress.done, total: ev.total ?? task.progress.total, name: ev.name || task.progress.name };
+    // 下载队列：一个文件一条（ADR-0007）；开跑那条 total 有、name 没有，不算文件
+    if (ev.name) events.emit('task-file', { id: task.id, url: task.url, site: task.site, title: task.title, done: task.progress.done, total: task.progress.total, name: ev.name });
   }
   persist(task).catch(() => {});
 }

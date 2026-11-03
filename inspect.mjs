@@ -93,7 +93,9 @@ export async function inspectFile(file) {
       const idx = Number(name.match(/(\d+)/)[1]);
       const out = path.join(previewDir, `plate-${idx}.png`);
       await writeFile(out, zip.read(name));
-      thumbs.push({ index: idx, file: `/preview/${modelDir}/${path.basename(file, ext)}/plate-${idx}.png` });
+      // 文件名里有 % , 空格（创想云配置名带 15% infill），拼 URL 必须编码，否则服务端 decodeURI 直接 500
+      const seg = encodeURIComponent(path.basename(file, ext));
+      thumbs.push({ index: idx, file: `/preview/${modelDir}/${seg}/plate-${idx}.png` });
     }
 
     const count = Math.max(thumbs.length, slicePlates.length, settingPlates.length);

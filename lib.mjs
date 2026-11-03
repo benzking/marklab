@@ -106,6 +106,36 @@ export function noFilesKind({ wantFiles, savedCount, hasFiles, linkErr }) {
 
 export const stripTags = (html) => String(html || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
 
+/**
+ * 打印配置 → 本地已下的 3mf（savedFiles 里的一条）。三档降级，对不上就 null：
+ * profileId（新库）→ 文件名与配置名精确相等（创想云）→ 一配置一文件。
+ * 宁可不给下载按钮，也不按顺序硬配——配错了比没有更坏（spec §4.2）。
+ */
+export function profileFile(model, profile) {
+  const files = (model?.savedFiles || []).filter((f) => f.kind === 'profile' && f.path && f.exists !== false);
+  if (!files.length || !profile) return null;
+  const byId = files.find((f) => f.profileId != null && String(f.profileId) === String(profile.id));
+  if (byId) return byId;
+  const want = `${profile.name || ''}.3mf`.toLowerCase();
+  const byName = files.find((f) => String(f.name || '').toLowerCase() === want);
+  if (byName) return byName;
+  return files.length === 1 && (model.profiles || []).length === 1 ? files[0] : null;
+}
+
+/**
+ * 这条配置是不是模型作者做的（决定详情页标不标「作者」）。
+ * 各站字段不同：创想云 isAuth、MakerOnline isAuthor、MakerWorld 比 creatorUid。
+ * 没有这个字段就返回 null —— 不显示，不猜（Snapmaker 就不给）。
+ */
+export function profileByAuthor(model, profile) {
+  const p = profile || {};
+  if (p.isAuth != null) return Boolean(p.isAuth);
+  if (p.isAuthor != null) return Boolean(p.isAuthor);
+  const c = p.creatorUid ?? p.uid;
+  if (c != null && model?.authorUid != null) return String(c) === String(model.authorUid);
+  return null;
+}
+
 export const slugify = (s) =>
   String(s || 'model')
     .trim()
