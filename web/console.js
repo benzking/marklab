@@ -616,7 +616,8 @@ function hitRow(h) {
 async function loadSubs() {
   clearFail('#subs-err');
   try {
-    if (!sitesData) await loadSites(); // 榜单名、筛选项来自站点包能力位，详情页也得先有
+    // 榜单名、筛选项来自能力位：先出清单，站点探测（慢）回来再重画，别让列表干等
+    if (!sitesData) loadSites().then(renderSubs);
     const rows = await api('/api/console/subs');
     subsData = Array.isArray(rows) ? rows : [];
     if (selectedSub && !subsData.some((s) => s.id === selectedSub)) selectedSub = null;
