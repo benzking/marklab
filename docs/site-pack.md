@@ -39,6 +39,8 @@
 | `aliases` | ⬜ | 历史键 → 本包（`makeronline` → `.cn`）。只在入口认，返回一律用规范键 |
 | `loginOnly` | ⬜ | 必须登录的接口路径前缀，给 `authneed.mjs` 的升级链用 |
 | `searchOptions` | ⬜ | 本站能怎么搜：支持的排序键、页大小、带不带标签（§11.2）。**不写 = 只支持默认序、不带标签** |
+| `filters` | ⬜ | 本站支持哪些筛选，键与值都得在词表里（§11.4）。**不写 = 一个都不支持** |
+| `feeds` | ⬜ | 本站有哪些榜单源 `[{ key, label }]`（§11.5）。声明了就必须实现 `feed()`，反之亦然 |
 | `rate` | ⬜ | 本站固有的模型间隔 `{modelGapSec: [最小, 最大]}`，秒（§6） |
 
 ## 3. 必需成员（5 个，缺一个包就不成立）
@@ -53,7 +55,7 @@
 
 `items` 的每一条与 `meta()` 的模型对象同形（归一化后的字段名），额外带 `site`。
 
-## 4. 可选成员（4 个）
+## 4. 可选成员（5 个）
 
 | 成员 | 签名 | 返回 | 谁有 |
 |---|---|---|---|
@@ -61,6 +63,7 @@
 | `userModels` | `({uid, page, pageSize})` | `Page<ModelListItem>`（§11.1） | 五站都有 |
 | `categories` | `()` | `Category[]`（§11.1） | 创想云、MakerWorld、Snapmaker、makeronline.com（**makeronline.cn 没有**，见 §8） |
 | `checkinStatus` | `()` | `CheckinStatus`（§11.1） | 创想云、MakerOnline.cn |
+| `feed` | `({key, page, pageSize})` | `Page<ModelListItem>`（§11.1，**`total` 恒 `null`**） | 创想云（§11.5） |
 
 形状见 §11.1 的 `CheckinStatus`。`checkin()` 返回的是同一个 `CheckinResult`，
 所以「读状态」和「真去签」两条路给的东西一模一样，公共层只需要一套拼文案的代码。
@@ -217,4 +220,39 @@ searchOptions: {
 | 页大小固定 | 否 | **20** | 否 | 否 | 否 |
 | `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ |
 | `categories` | ✓ | ✓ | ✓ | ✗ | ✓ |
+| `filters` | 颜色、星标/独家/Maker 严选/会员 | 颜色、星标/独家/CyberBrick/耗材供应/可定制/参数化 | 颜色 | ✗ | ✗ |
+| `feeds` | ✓ `weekly-picks`（本周值得打） | ✗ | ✗ | ✗ | ✗ |
 | `checkin` / `checkinStatus` | ✓ / ✓ | ✗ / ✗ | ✗ / ✗ | ✓ / ✓ | ✗ / ✗ |
+
+### 11.4 筛选声明 `filters`
+
+```js
+filters: {
+  color: ['multi', 'single'],           // 每个值都得在 contract.mjs FILTERS 里
+  badge: ['picked', 'exclusive', 'curated', 'member'],
+}
+```
+
+- 键与值的**全集**在 `sites/contract.mjs` 的 `FILTERS`（`color`：`multi` / `single`；
+  `badge`：`picked` / `exclusive` / `curated` / `member` / `cyberbrick` / `supply` /
+  `customizable` / `parametric`）。包只声明**自己支持的子集**，值不许重复。
+- 语义键是公共层的词（`color`、`badge`），**原生参数名不出包**：包自己把
+  `{color: 'multi'}` 翻成 `multiColor` / `colorType` 之类。
+- **不写 = 一个都不支持**。公共层 `search.filterFor(site, filters)` 会丢掉词表外的键、
+  词表外的值、以及本站没声明的值，只留一行 `console.warn`——筛选失效不该让订阅停摆。
+- 控制台按 `abilities.filters` 出下拉：本站没声明的键**整个不出现**，不给「选了也不生效」的选项。
+
+### 11.5 榜单源 `feeds` + `feed()`
+
+```js
+feeds: [{ key: 'weekly-picks', label: '本周值得打' }], // key 稳定 ASCII、包内唯一；label 给人看
+feed: ({ key, page = 1, pageSize = 20 }) => Promise<{ total: null, items: ModelListItem[] }>,
+```
+
+- `key` 是**写进订阅的稳定标识**，改它等于把老订阅废掉；站方改地址、改接口只改包内实现。
+- `total` **恒 `null`**：榜单是站方滚动的人工流，没有可信总数（创想云的 `result.count` 是逐页累加的
+  假值 40/60/80）。给 `0` 会被订阅当成「翻页到底」，把这一轮提前结束。
+- `feeds` 与 `feed()` **同进同退**（`checkPack()` 断言）：有声明没实现 = 控制台给出一个点了就报错的下拉；
+  有实现没声明 = 没人用得上。
+- 失败抛错，由 `search.mjs` 的 `feed()` 包成 `{ items: [], error }`，不拖垮整轮；未知 `key` 同理。
+- 增量、前 N 条上限由公共层负责，包只管「第 page 页、pageSize 条」。

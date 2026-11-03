@@ -87,7 +87,13 @@
           <select id="f-kind" name="kind">
             <option value="keyword">关键字订阅（搜索 + 匹配）</option>
             <option value="author">作者订阅（他发的全下）</option>
+            <option value="feed">榜单订阅（跟着站方的流走）</option>
           </select>
+        </div>
+        <div class="field wide" data-kind="feed" hidden>
+          <label>榜单（站点 + 榜单 + 前 N 条，每条榜单跑一遍）</label>
+          <div id="feed-rows"></div>
+          <button class="btn sm" type="button" id="feed-add">加一条榜单</button>
         </div>
         <div class="field wide" data-kind="keyword">
           <label for="f-kw">关键字（逗号分隔）</label>

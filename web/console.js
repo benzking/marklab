@@ -9,6 +9,20 @@ const ACTIVE = new Set(['queued', 'fetching', 'parsing', 'downloading']);
 // 搜索排序键 → 人话（键的并集见 sites/contract.mjs SORTS）
 const SORT_LABEL = { trend: '综合趋势', downloads: '按下载', likes: '按点赞', collects: '按收藏', newest: '按最新', hot: '按热门', score: '按相关性', views: '浏览数', prints: '打印数' };
 const sortName = (s) => SORT_LABEL[s] || s || '默认序';
+// 筛选词表 → 人话（键和值的并集见 sites/contract.mjs FILTERS）；站点没声明的键/值不出现
+const FILTER_LABEL = {
+  color: { label: '颜色', values: { multi: '多色', single: '单色' } },
+  badge: {
+    label: '模型标签',
+    values: { picked: '星标模型', exclusive: '独家', curated: 'Maker 严选', member: '会员模型', cyberbrick: 'CyberBrick', supply: '耗材供应', customizable: '可定制', parametric: '参数化' },
+  },
+};
+// 规则行尾的筛选摘要，如「多色 · 星标模型」
+const filterText = (f) =>
+  Object.entries(FILTER_LABEL)
+    .map(([k, def]) => (f?.[k] ? def.values[f[k]] || f[k] : ''))
+    .filter(Boolean)
+    .join(' · ');
 const MATCH_LABEL = { name: '按名字', tag: '按标签' };
 const DECISION = { queued: '已入队', 'no-match': '名字没命中', threshold: '没过门槛', 'in-library': '库里已有', 'in-queue': '已在队列' };
 
@@ -410,6 +424,7 @@ let detailCands = null; // { id, items }，候选清单是台账，跟命中记�
 
 function thresholdText(s) {
   if (s.kind === 'author') return '作者订阅：他发的全下';
+  if (s.kind === 'feed') return '榜单订阅：榜单里的全下，不看门槛';
   const parts = [];
   if (Number(s.minLikes) > 0) parts.push(`点赞 ≥ ${fmtNum(s.minLikes)}`);
   if (Number(s.minDownloads) > 0) parts.push(`下载 ≥ ${fmtNum(s.minDownloads)}`);
@@ -479,11 +494,19 @@ function renderSubDetail() {
     return;
   }
   const author = s.kind === 'author';
+  const isFeed = s.kind === 'feed';
   const kws = (s.keywords || []).join('、');
   const users = (s.users || []).map((u) => `${siteName(u.site)} ${u.name || u.id}`).join('、');
   const rules = (s.rules || [])
-    .map((r) => `<span class="tag">${esc(siteName(r.site))} · ${esc(sortName(r.sort))} · 前 ${fmtNum(r.limit)} 条</span>`)
+    .map((r) => {
+      const f = filterText(r.filters);
+      return `<span class="tag">${esc(siteName(r.site))} · ${esc(sortName(r.sort))}${f ? ` · ${esc(f)}` : ''} · 前 ${fmtNum(r.limit)} 条</span>`;
+    })
     .join(' ');
+  const feeds = (s.feeds || [])
+    .map((x) => `<span class="tag">${esc(siteName(x.site))} · ${esc(feedLabel(x.site, x.feed))} · 前 ${fmtNum(x.limit)} 条</span>`)
+    .join(' ');
+  const kindText = isFeed ? '榜单订阅（跟着站方的流走）' : author ? '作者订阅（他发的全下）' : '关键字订阅';
   const modes = (s.matchModes || []).map((m) => MATCH_LABEL[m] || m).join('、');
   const prog = s.progress ? `<div class="sub-line">正在跑：${esc(s.progress.site || '')} · ${esc(s.progress.kw || '')} · 已搜 ${fmtNum(s.progress.searched)}/${fmtNum(s.progress.planned)}</div>` : '';
   const hits = detailHits && detailHits.id === s.id ? detailHits.rows : null;
@@ -498,19 +521,20 @@ function renderSubDetail() {
         <button class="btn sm danger" data-del="${esc(s.id)}" type="button">删除</button>
       </div>
     </div>
-    <div class="kvline"><em>类型</em>${author ? '作者订阅（他发的全下）' : '关键字订阅'}</div>
+    <div class="kvline"><em>类型</em>${kindText}</div>
     <div class="kvline"><em>状态</em><span class="tag ${s.enabled ? 'ok' : ''}">${s.enabled ? '启用' : '停用'}</span></div>
-    ${author ? '' : `<div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>`}
+    ${author || isFeed ? '' : `<div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>`}
     ${author ? `<div class="kvline"><em>作者</em>${users ? esc(users) : '—'}</div>` : ''}
-    ${author ? '' : `<div class="kvline"><em>规则</em>${rules || '—'}</div>`}
-    ${author ? '' : `<div class="kvline"><em>匹配</em>${esc(modes || '—')}</div>`}
+    ${isFeed ? `<div class="kvline"><em>榜单</em>${feeds || '—'}</div>` : ''}
+    ${author || isFeed ? '' : `<div class="kvline"><em>规则</em>${rules || '—'}</div>`}
+    ${author || isFeed ? '' : `<div class="kvline"><em>匹配</em>${esc(modes || '—')}</div>`}
     <div class="kvline"><em>门槛</em>${esc(thresholdText(s))}</div>
     ${author ? `<div class="kvline"><em>游标</em>${esc(authorCursorText(s))}</div>` : ''}
     <div class="kvline"><em>间隔</em>每 ${s.intervalHours || 8} 小时</div>
     <div class="kvline"><em>上次</em>${s.lastRunAt ? fmtTime(s.lastRunAt) : '还没跑过'} · ${esc(lastResultText(s))}</div>
     ${prog}
     ${
-      author
+      author || isFeed
         ? ''
         : `<h3 class="sub-h">本轮候选 <span class="muted small">这是本轮搜到的全部候选，最后一列是它为什么没进抓取队列</span></h3>
     <div class="cands">${cands === null ? '<p class="muted small">加载中…</p>' : cands.length ? candTable(cands) : '<p class="muted small">还没跑过</p>'}</div>`
@@ -518,7 +542,7 @@ function renderSubDetail() {
     <h3 class="sub-h">命中记录</h3>
     <div class="hits">${hits === null ? '<p class="muted small">加载中…</p>' : hits.length ? hits.map(hitRow).join('') : '<p class="muted small">还没有命中</p>'}</div>`;
   if (!hits) loadHits(s.id);
-  if (!author && !cands) loadCandidates(s.id);
+  if (!author && !isFeed && !cands) loadCandidates(s.id);
 }
 
 async function loadCandidates(id) {
@@ -592,6 +616,7 @@ function hitRow(h) {
 async function loadSubs() {
   clearFail('#subs-err');
   try {
+    if (!sitesData) await loadSites(); // 榜单名、筛选项来自站点包能力位，详情页也得先有
     const rows = await api('/api/console/subs');
     subsData = Array.isArray(rows) ? rows : [];
     if (selectedSub && !subsData.some((s) => s.id === selectedSub)) selectedSub = null;
@@ -681,7 +706,7 @@ const sitesList = () => (sitesData && Array.isArray(sitesData.sites) ? sitesData
 const userUrl = (u) => u.url || '';
 const abilitiesOf = (site) => sitesList().find((s) => s.site === site)?.abilities || {};
 
-/** 一条候选规则：站点 + 排序 + 前 N 条 + 删。排序项只列该站 abilities.sorts 里有的。 */
+/** 一条候选规则：站点 + 排序 + 筛选 + 前 N 条 + 删。排序/筛选项只列该站声明过的。 */
 function ruleRow(rule = {}) {
   const row = document.createElement('div');
   row.className = 'rule-row';
@@ -691,11 +716,14 @@ function ruleRow(rule = {}) {
       .map((s) => `<option value="${esc(s.site)}"${s.site === site ? ' selected' : ''}>${esc(siteName(s.site))}</option>`)
       .join('')}</select>
     <select class="r-sort"></select>
+    <select data-filter="color"></select>
+    <select data-filter="badge"></select>
     <input class="r-limit" type="number" min="1" max="1000" step="1" value="${Math.max(1, Math.round(Number(rule.limit) || RULE_LIMIT))}"> 条
     <button class="btn sm" type="button" data-del-rule>删</button>
     <span class="r-hint"></span>`;
   $('#rule-rows').appendChild(row);
   fillSort(row, rule.sort);
+  fillFilters(row, rule.filters);
   return row;
 }
 
@@ -710,6 +738,53 @@ function fillSort(row, want) {
   sel.value = sorts.includes(want) ? want : sorts[0] || '';
   row.querySelector('.r-hint').textContent = ab.tags === false ? '该站不带标签' : '';
 }
+
+/** 筛选下拉：该站没声明的键整个藏起来——给一个选了也不生效的下拉只会骗人。留空 = 全部。 */
+function fillFilters(row, want = {}) {
+  for (const sel of row.querySelectorAll('[data-filter]')) {
+    const k = sel.dataset.filter;
+    const vals = abilitiesOf(row.querySelector('.r-site').value).filters?.[k] || [];
+    sel.hidden = !vals.length;
+    sel.innerHTML = vals.length
+      ? `<option value="">全部</option>${vals
+          .map((v) => `<option value="${esc(v)}">${esc(FILTER_LABEL[k]?.values?.[v] || v)}</option>`)
+          .join('')}`
+      : '';
+    sel.value = vals.includes(want?.[k]) ? want[k] : '';
+  }
+}
+
+/** 一条榜单：站点 + 榜单 + 前 N 条 + 删。站点下拉只列声明了 feeds 的站。 */
+function feedRow(feed = {}) {
+  const sites = sitesList().filter((s) => Array.isArray(s.abilities?.feeds) && s.abilities.feeds.length);
+  if (!sites.length) {
+    $('#feed-rows').innerHTML = '<p class="muted small">还没有站点声明榜单源。</p>';
+    return null;
+  }
+  const row = document.createElement('div');
+  row.className = 'rule-row';
+  const site = sites.some((s) => s.site === feed.site) ? feed.site : sites[0].site;
+  row.innerHTML = `
+    <select class="f-site">${sites
+      .map((s) => `<option value="${esc(s.site)}"${s.site === site ? ' selected' : ''}>${esc(siteName(s.site))}</option>`)
+      .join('')}</select>
+    <select class="f-feed"></select>
+    <input class="f-limit" type="number" min="1" max="1000" step="1" value="${Math.max(1, Math.round(Number(feed.limit) || RULE_LIMIT))}"> 条
+    <button class="btn sm" type="button" data-del-feed>删</button>`;
+  $('#feed-rows').appendChild(row);
+  fillFeed(row, feed.feed);
+  return row;
+}
+
+/** 站点换了就重排榜单项：榜单是站方声明的 key，不是让用户粘网址。 */
+function fillFeed(row, want) {
+  const feeds = abilitiesOf(row.querySelector('.f-site').value).feeds || [];
+  const sel = row.querySelector('.f-feed');
+  sel.innerHTML = feeds.map((x) => `<option value="${esc(x.key)}">${esc(x.label)}</option>`).join('');
+  sel.value = feeds.some((x) => x.key === want) ? want : feeds[0]?.key || '';
+}
+
+const feedLabel = (site, key) => abilitiesOf(site).feeds?.find((x) => x.key === key)?.label || key;
 
 function applyKind() {
   const kind = $('#f-kind').value;
@@ -727,6 +802,8 @@ async function openSubForm(sub) {
   applyKind();
   $('#rule-rows').innerHTML = '';
   for (const rule of sub?.rules?.length ? sub.rules : [{}]) ruleRow(rule);
+  $('#feed-rows').innerHTML = '';
+  for (const feed of sub?.feeds?.length ? sub.feeds : [{}]) feedRow(feed);
   const modes = sub ? sub.matchModes || [] : ['name'];
   for (const box of f.querySelectorAll('input[name="match"]')) box.checked = modes.includes(box.value);
   if (sub) {
@@ -745,12 +822,27 @@ async function openSubForm(sub) {
 
 function formRules(f) {
   return [...f.querySelectorAll('#rule-rows .rule-row')]
-    .map((row) => ({
-      site: row.querySelector('.r-site').value,
-      sort: row.querySelector('.r-sort').value || null,
-      limit: Math.max(1, Math.round(Number(row.querySelector('.r-limit').value) || RULE_LIMIT)),
-    }))
+    .map((row) => {
+      const filters = {};
+      for (const sel of row.querySelectorAll('[data-filter]')) if (!sel.hidden && sel.value) filters[sel.dataset.filter] = sel.value;
+      return {
+        site: row.querySelector('.r-site').value,
+        sort: row.querySelector('.r-sort').value || null,
+        limit: Math.max(1, Math.round(Number(row.querySelector('.r-limit').value) || RULE_LIMIT)),
+        filters: Object.keys(filters).length ? filters : null, // 空对象存成 null，跟 sort 同一习惯
+      };
+    })
     .filter((r) => r.site);
+}
+
+function formFeeds(f) {
+  return [...f.querySelectorAll('#feed-rows .rule-row')]
+    .map((row) => ({
+      site: row.querySelector('.f-site').value,
+      feed: row.querySelector('.f-feed').value,
+      limit: Math.max(1, Math.round(Number(row.querySelector('.f-limit').value) || RULE_LIMIT)),
+    }))
+    .filter((x) => x.site && x.feed);
 }
 
 async function submitSub(e) {
@@ -767,6 +859,10 @@ async function submitSub(e) {
     const users = String(el('users').value || '').split(/\n+/).map((s) => s.trim()).filter(Boolean);
     if (!users.length) return flash('#sub-form-note', '作者订阅至少填一个作者主页链接', true);
     body = { name: name || '作者订阅', kind, users, intervalHours, enabled };
+  } else if (kind === 'feed') {
+    const feeds = formFeeds(f);
+    if (!feeds.length) return flash('#sub-form-note', '榜单订阅至少要一条榜单（站点 + 榜单 + 前 N 条）', true);
+    body = { name: name || feedLabel(feeds[0].site, feeds[0].feed), kind, feeds, intervalHours, enabled };
   } else {
     const keywords = String(el('keywords').value || '').split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
     const rules = formRules(f);
@@ -1190,7 +1286,23 @@ $('#sub-form').addEventListener('submit', submitSub);
 $('#f-kind').addEventListener('change', applyKind);
 $('#rule-add').addEventListener('click', () => ruleRow({}));
 $('#rule-rows').addEventListener('change', (e) => {
-  if (e.target.classList.contains('r-site')) fillSort(e.target.closest('.rule-row'));
+  if (!e.target.classList.contains('r-site')) return;
+  const row = e.target.closest('.rule-row');
+  fillSort(row);
+  fillFilters(row); // 站点换了，筛选项跟着换，旧值不跨站保留
+});
+$('#feed-add').addEventListener('click', () => feedRow({}));
+$('#feed-rows').addEventListener('change', (e) => {
+  if (e.target.classList.contains('f-site')) fillFeed(e.target.closest('.rule-row'));
+});
+$('#feed-rows').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-del-feed]');
+  if (!btn) return;
+  if ($('#feed-rows').querySelectorAll('.rule-row').length <= 1) {
+    flash('#sub-form-note', '榜单订阅至少留一条榜单', true);
+    return;
+  }
+  btn.closest('.rule-row').remove();
 });
 $('#rule-rows').addEventListener('click', (e) => {
   const btn = e.target.closest('[data-del-rule]');

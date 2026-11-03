@@ -435,6 +435,8 @@ const server = http.createServer(async (req, res) => {
             userModels: typeof pack?.userModels === 'function',
             sorts: pack?.searchOptions?.sorts ?? [], // 本站支持的搜索排序（site-pack.md §11.2）
             tags: pack?.searchOptions?.tags === true, // 搜索结果带不带标签，订阅端据此灰掉 tag 勾选
+            filters: pack?.filters ?? {}, // 本站支持的筛选子集（site-pack.md §11.4），空对象 = 一个都不支持
+            feeds: pack?.feeds ?? [], // 本站的榜单源（site-pack.md §11.5），没声明 = 没有榜单
           },
         };
       });
