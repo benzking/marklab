@@ -924,10 +924,15 @@ test('daily7：只数带 3mf 的，按北京时间自然日分桶，7 天以前�
 
 // docs/site-pack.md §9：契约测试。成员表在 sites/contract.mjs，这里只负责跑它——不联网。
 test('站点包契约：形状全过 checkPack，能力声明在词表里', async () => {
-  const { checkPack, isSearchOptions } = await import('./sites/contract.mjs');
+  const { checkPack, isSearchOptions, FILTERS } = await import('./sites/contract.mjs');
   for (const p of sitePacks.all()) {
     assert.deepEqual(checkPack(p), [], `${p.site} 不合契约`);
     if (p.searchOptions) assert.ok(isSearchOptions(p.searchOptions), `${p.site}.searchOptions 形状不对`);
+    // 筛选子集只能从公共词表里挑：包偷偷加值要红，词表是唯一真相（spec §11.3）
+    for (const [k, vs] of Object.entries(p.filters || {})) {
+      assert.ok(Object.hasOwn(FILTERS, k), `${p.site}.filters 键 ${k} 不在词表里`);
+      for (const v of vs) assert.ok(FILTERS[k].includes(v), `${p.site}.filters.${k} 值 ${v} 不在词表里`);
+    }
   }
 });
 
@@ -940,6 +945,15 @@ test('站点包契约：八种返回模型各有一条断言，假站点走一�
   assert.ok(c.isLoginState(await fixture.loginState()), 'loginState() 要是 LoginState');
   assert.ok(c.isPage(await fixture.search({ keyword: 'x' })), 'search() 要是 Page');
   assert.ok(c.isPage(await fixture.userModels({ uid: 'u' })), 'userModels() 要是 Page');
+  assert.ok(c.isPage(await fixture.feed({ key: 'weekly' })), 'feed() 要是 Page');
+  // 筛选 / 榜单声明：形状断言各一条，红得起也绿得住
+  assert.ok(c.isFilters({ color: ['multi'], badge: ['picked', 'curated'] }), 'filters 子集形状');
+  assert.ok(!c.isFilters({ color: ['multi', 'multi'] }), 'filters 值不许重复');
+  assert.ok(!c.isFilters({ color: [] }), 'filters 值不许空');
+  assert.ok(!c.isFilters({ material: ['pla'] }), 'filters 键要在词表里');
+  assert.ok(c.isFeeds([{ key: 'weekly-picks', label: '本周值得打' }]), 'feeds 形状');
+  assert.ok(!c.isFeeds([{ key: 'weekly', label: '本周' }, { key: 'weekly', label: '重复' }]), 'feeds key 要唯一');
+  assert.ok(!c.isFeeds([{ key: 'weekly', label: '' }]), 'feeds label 不许空');
   // 签到结果：没有 text，signed 一定是布尔
   assert.ok(c.isCheckin({ signed: true, streak: 3, gain: 5 }), 'CheckinResult 形状');
   assert.ok(!c.isCheckin({ signed: true, text: '签到成功' }), 'CheckinResult 不许带 text');
