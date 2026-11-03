@@ -174,11 +174,16 @@ export const safeDecode = (s) => {
 };
 
 export const str = (v) => (typeof v === 'string' && v.trim() ? v.trim() : null);
-// cookie 域匹配：只认同域或子域。写成 `c.domain.endsWith(h)` 会让 evil-crealitycloud.cn 混进来。
+// cookie 域匹配：同域、子域，以及父域——`.snapmaker.cn` 的 cookie 浏览器会发给 space.snapmaker.cn，
+// 不认父域就会把已登录看成未登录。仍只认带点的后缀，evil-crealitycloud.cn 冒充不了 crealitycloud.cn。
 export const cookiesFor = (cookies, domains) =>
-  (cookies || []).filter((c) =>
-    domains.some((d) => c.domain === d || c.domain === `.${d}` || c.domain.endsWith(`.${d}`)),
-  );
+  (cookies || []).filter((c) => {
+    const cd = String(c.domain || '').toLowerCase().replace(/^\./, '');
+    return domains.some((d) => {
+      const hd = String(d || '').toLowerCase().replace(/^\./, '');
+      return cd === hd || cd.endsWith(`.${hd}`) || hd.endsWith(`.${cd}`);
+    });
+  });
 /**
  * 签到结果（CheckinResult）→ 一行中文。文案只在这里，站点包不许拼句子（site-pack.md §11.1）。
  * acted = 这一次真的发了签到请求（不是 dry 探状态）。

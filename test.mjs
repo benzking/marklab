@@ -46,6 +46,12 @@ test('签到：创想云的 checkinDay 是 UTC 零点对齐的秒，能对上「
   assert.notEqual(dayNum(1793577600), dayNum(Date.UTC(2026, 10, 3) / 1000), '换一天就不等');
 });
 
+test('cookie 认父域：.snapmaker.cn 的 token 要能被 space.snapmaker.cn 拿到', () => {
+  const all = [{ name: 'login_access_token', value: 't', domain: '.snapmaker.cn' }];
+  assert.equal(cookiesFor(all, ['space.snapmaker.cn']).length, 1, '父域 cookie 浏览器会发过来，不认就是假未登录');
+  assert.equal(cookiesFor([{ name: 't', value: '1', domain: 'evil-snapmaker.cn' }], ['space.snapmaker.cn']).length, 0, 'evil- 前缀仍不许混进来');
+});
+
 test('cookie 只认同域与子域，evil- 前缀的不许混进来', () => {
   const all = [
     { name: 'a', value: '1', domain: '.crealitycloud.cn' },
