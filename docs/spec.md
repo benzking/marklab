@@ -290,7 +290,7 @@ MakerOnline 多条配置常指向同一个 3mf，`fileLinks` 按对象路径去�
 
 | 文件 | 形状 | 写者 |
 |---|---|---|
-| `subs.json` | `{ subs: [{ id, name, kind, keywords[], users[], rules[], matchModes[], minLikes, minDownloads, pickedOnly, intervalHours, enabled, cursor, lastRunAt, lastResult, authorCursor }] }`（`rules[]` = `{ site, sort, limit }`；作者订阅不带 `rules`/`matchModes`/`minLikes`/`minDownloads`/`pickedOnly`，改用 `authorCursor: { "site:id": { page, done } }`） | server |
+| `subs.json` | `{ subs: [{ id, name, kind, keywords[], users[], rules[], feeds[], matchModes[], minLikes, minDownloads, pickedOnly, intervalHours, enabled, cursor, lastRunAt, lastResult, authorCursor }] }`（`rules[]` = `{ site, sort, limit, filters }`，`filters` 可为 `null`；`feeds[]` = `{ site, feed, limit }`；作者订阅不带 `rules`/`feeds`/`matchModes`/`minLikes`/`minDownloads`/`pickedOnly`，改用 `authorCursor: { "site:id": { page, done } }`；榜单订阅只带 `feeds`） | server |
 | `subs/<id>.candidates.json` | `{ items: [{ key, sources[], title, author, tags[], decision, firstSeen, lastSeen }] }`，键是 `site:id`；`decision` ∈ `queued / no-match / threshold / in-library / in-queue`；30 天没再出现就清 | server |
 | `subs/<id>.jsonl` | 每行一条命中：`{ url, title, author, site, likes, downloads, matchedAt, taskId }`，新的在前 | server |
 | `tasks/<YYYY-MM>.jsonl` | 每行一条任务快照（全量覆盖式，按 `id` 取最后一行）：`{ id, url, site, source, subId, phase, rounds, progress, error, warning, startedAt, endedAt }` | 所有进程 append |
@@ -838,9 +838,10 @@ queued → fetching → parsing → downloading → done
 | 36 | 入队不查磁盘剩余空间 —— **已修**（票 12）| 写满分区 |
 | 37 | 错误串仍是 `Node.js v20.19.2` / `退出码 0`，没有 §10.1 的七类分类 —— **已修**（票 11）| 用户看不懂、控制台没法按原因分 |
 | 38 | 订阅每轮没有时间预算，177 个词一轮要 177 分钟 —— **已修**（票 14）| 8 小时的轮次被拖长，订阅互相挤 |
-| 39 | 订阅原来是「关键字 × 站点 × 每轮上限 50」，作者订阅按 `pageLimit` 翻页，搜索与判定挤在一轮里（§6.2 改版）—— **已实现**：`kind` 二选一、候选规则（站点 + 排序 + 前 N 条）、匹配方式、两个调度器、候选台账 `data/subs/<id>.candidates.json`、作者订阅增量与页码游标 | 判不准、限速空转 |
+| 39 | 订阅原来是「关键字 × 站点 × 每轮上限 50」，作者订阅按 `pageLimit` 翻页，搜索与判定挤在一轮里（§6.2 改版）—— **已实现**：`kind` 显式声明（当时两种，`feed` 见 #6）、候选规则（站点 + 排序 + 前 N 条）、匹配方式、两个调度器、候选台账 `data/subs/<id>.candidates.json`、作者订阅增量与页码游标 | 判不准、限速空转 |
 | 40 | 订阅改版剩下的三块 —— **没做**：站点包没有 `searchOptions.tags` 能力位（控制台要靠它灰掉勾选框）；§11 的订阅验收还没全落成 `test.mjs` 断言（`limit` 截断 / `authorCursor` / 跨站合并）；控制台表单还是老形状（没有类型、规则表、匹配方式，详情没有候选清单）→ 票 #2 / #3 / #4 | 前端只能写死站点名，改一处崩另一处 |
 | 41 | 详情页与运行日志的四个测试问题（作者徽标 / 打印盘跟随 / 文件栏去掉 / 日志要有历史）—— **已实现**：`savedFiles[].profileId` 契约、`profileFile` / `profileByAuthor` 三档降级、`events.jsonl` 三类事件、日志页五档筛选、配置卡底部按钮条 | 老库没有 `profileId`，只剩名字与一对一降级；创想云的盘要按需解析 |
+| 42 | 订阅只能按关键字/作者找模型，站方筛好的榜（创想云「本周值得打」）和多色/星标这类筛选接不进来 —— **已实现**（#6）：`kind: 'feed'` + 站点包 `feeds`/`feed()`、语义筛选 `filters`（`color`/`badge`）+ 词表 `FILTERS`、控制台榜单表单与筛选下拉 | 站点改版只改包内实现；榜单是站方人工流，没有可信总数 |
 
 **1–39 全部已修**，按票（`.scratch/spec-v1/issues/`）落地：站点包 01–06、判重 07、队列 08、
 浏览器 09、登录态 10、失败可见性 11、派生数据与磁盘 12、缓存 13、订阅调度 14、匿名优先 15、

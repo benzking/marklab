@@ -21,6 +21,7 @@ const PAGE = 20; // 站点搜索一页 20 条（site-pack.md）
 const AUTHOR_STOP = 20; // 作者订阅：连续一页都在库里就停（spec §6.2「作者订阅的增量」）
 const CAND_DAYS = 30; // 候选 30 天没再出现就清
 export const MATCH_MODES = ['name', 'tag'];
+const KIND_NAME = { author: '作者订阅', feed: '榜单订阅', keyword: '关键字订阅' };
 
 export const DEFAULTS = {
   kind: 'keyword', // 'keyword' | 'author' | 'feed'，三选一，不靠列表空不空推断
@@ -190,7 +191,7 @@ export function cleanRules(input) {
     .map((r) => {
       const site = String(r?.site || '').trim();
       if (!search.allSites().includes(site)) throw new Error(`规则里的站点不认识：${site}`);
-      const limit = Math.min(1000, Math.max(1, Math.round(Number(r?.limit) || PAGE)));
+      const limit = clampLimit(r?.limit);
       const filters = search.filterFor(site, r?.filters);
       return { site, sort: search.sortOfSite(site, r?.sort) || null, limit, filters: Object.keys(filters).length ? filters : null };
     })
@@ -206,10 +207,13 @@ export function cleanFeeds(input) {
       const feed = String(f?.feed || '').trim();
       if (!search.allSites().includes(site)) return null;
       if (!search.feedsOf(site).some((x) => x.key === feed)) return null;
-      return { site, feed, limit: Math.min(1000, Math.max(1, Math.round(Number(f?.limit) || PAGE))) };
+      return { site, feed, limit: clampLimit(f?.limit) };
     })
     .filter(Boolean);
 }
+
+// 前 N 条：1–1000，没给就一页（站点一页 20 条）
+const clampLimit = (v) => Math.min(1000, Math.max(1, Math.round(Number(v) || PAGE)));
 
 const cleanModes = (v) => [...new Set((Array.isArray(v) ? v : []).map((m) => String(m).trim()).filter((m) => MATCH_MODES.includes(m)))];
 
@@ -222,11 +226,19 @@ export function planJobs(sub) {
   return jobs;
 }
 
+/** 作者/榜单订阅都不做匹配：没有来源词要配、也没有门槛可量。 */
+function noMatch(next) {
+  next.matchModes = [];
+  next.minLikes = 0;
+  next.minDownloads = 0;
+  next.pickedOnly = false;
+}
+
 /** 校验 + 补默认值。kind 决定哪些字段算数，另一边的残留一律清掉。 */
 function shape(input, prev = {}) {
   const next = { ...DEFAULTS, ...prev, ...input };
-  // 老数据没有 kind 一律按 keyword 认（票 #9）；显式给了榜单行却没给 kind 才当 feed
-  next.kind = input.kind ?? prev.kind ?? (input.users?.length ? 'author' : input.keywords?.length ? 'keyword' : input.feeds?.length ? 'feed' : 'keyword');
+  // kind 只认显式声明（spec §6.2）：老数据由 migrateSub 补成 keyword，这里不按列表空不空推断
+  next.kind = input.kind ?? prev.kind ?? 'keyword';
   if (!['keyword', 'author', 'feed'].includes(next.kind)) throw new Error('订阅类型只能是 keyword、author 或 feed');
   next.keywords = cleanKeywords(next.keywords);
   next.users = cleanUsers(next.users);
@@ -238,19 +250,13 @@ function shape(input, prev = {}) {
     next.keywords = [];
     next.rules = [];
     next.feeds = [];
-    next.matchModes = [];
-    next.minLikes = 0;
-    next.minDownloads = 0;
-    next.pickedOnly = false;
+    noMatch(next);
   } else if (next.kind === 'feed') {
     if (!next.feeds.length) throw new Error('榜单订阅至少要一行（站点 + 榜单 + 前 N 条）');
     next.keywords = [];
     next.users = [];
     next.rules = [];
-    next.matchModes = [];
-    next.minLikes = 0;
-    next.minDownloads = 0;
-    next.pickedOnly = false;
+    noMatch(next);
   } else {
     if (!next.keywords.length) throw new Error('关键字订阅至少要一个关键字');
     if (!next.rules.length) throw new Error('关键字订阅至少要一条候选规则（站点 + 排序 + 前 N 条）');
@@ -266,7 +272,7 @@ export async function create(input = {}) {
   const sub = {
     ...shape(input),
     id: `s_${randomUUID().slice(0, 8)}`,
-    name: String(input.name || '').trim() || (input.kind === 'author' ? '作者订阅' : '关键字订阅'),
+    name: String(input.name || '').trim() || KIND_NAME[input.kind] || '关键字订阅',
     createdAt: new Date().toISOString(),
     lastRunAt: null,
     lastResult: null,

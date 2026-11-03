@@ -506,6 +506,7 @@ function renderSubDetail() {
   const feeds = (s.feeds || [])
     .map((x) => `<span class="tag">${esc(siteName(x.site))} · ${esc(feedLabel(x.site, x.feed))} · 前 ${fmtNum(x.limit)} 条</span>`)
     .join(' ');
+  const kwOnly = !author && !isFeed; // 关键字订阅才有规则/匹配/候选清单
   const kindText = isFeed ? '榜单订阅（跟着站方的流走）' : author ? '作者订阅（他发的全下）' : '关键字订阅';
   const modes = (s.matchModes || []).map((m) => MATCH_LABEL[m] || m).join('、');
   const prog = s.progress ? `<div class="sub-line">正在跑：${esc(s.progress.site || '')} · ${esc(s.progress.kw || '')} · 已搜 ${fmtNum(s.progress.searched)}/${fmtNum(s.progress.planned)}</div>` : '';
@@ -523,26 +524,26 @@ function renderSubDetail() {
     </div>
     <div class="kvline"><em>类型</em>${kindText}</div>
     <div class="kvline"><em>状态</em><span class="tag ${s.enabled ? 'ok' : ''}">${s.enabled ? '启用' : '停用'}</span></div>
-    ${author || isFeed ? '' : `<div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>`}
+    ${kwOnly ? `<div class="kvline"><em>关键字</em>${kws ? esc(kws) : '—'}</div>` : ''}
     ${author ? `<div class="kvline"><em>作者</em>${users ? esc(users) : '—'}</div>` : ''}
     ${isFeed ? `<div class="kvline"><em>榜单</em>${feeds || '—'}</div>` : ''}
-    ${author || isFeed ? '' : `<div class="kvline"><em>规则</em>${rules || '—'}</div>`}
-    ${author || isFeed ? '' : `<div class="kvline"><em>匹配</em>${esc(modes || '—')}</div>`}
+    ${kwOnly ? `<div class="kvline"><em>规则</em>${rules || '—'}</div>` : ''}
+    ${kwOnly ? `<div class="kvline"><em>匹配</em>${esc(modes || '—')}</div>` : ''}
     <div class="kvline"><em>门槛</em>${esc(thresholdText(s))}</div>
     ${author ? `<div class="kvline"><em>游标</em>${esc(authorCursorText(s))}</div>` : ''}
     <div class="kvline"><em>间隔</em>每 ${s.intervalHours || 8} 小时</div>
     <div class="kvline"><em>上次</em>${s.lastRunAt ? fmtTime(s.lastRunAt) : '还没跑过'} · ${esc(lastResultText(s))}</div>
     ${prog}
     ${
-      author || isFeed
-        ? ''
-        : `<h3 class="sub-h">本轮候选 <span class="muted small">这是本轮搜到的全部候选，最后一列是它为什么没进抓取队列</span></h3>
+      kwOnly
+        ? `<h3 class="sub-h">本轮候选 <span class="muted small">这是本轮搜到的全部候选，最后一列是它为什么没进抓取队列</span></h3>
     <div class="cands">${cands === null ? '<p class="muted small">加载中…</p>' : cands.length ? candTable(cands) : '<p class="muted small">还没跑过</p>'}</div>`
+        : ''
     }
     <h3 class="sub-h">命中记录</h3>
     <div class="hits">${hits === null ? '<p class="muted small">加载中…</p>' : hits.length ? hits.map(hitRow).join('') : '<p class="muted small">还没有命中</p>'}</div>`;
   if (!hits) loadHits(s.id);
-  if (!author && !isFeed && !cands) loadCandidates(s.id);
+  if (kwOnly && !cands) loadCandidates(s.id);
 }
 
 async function loadCandidates(id) {
@@ -717,8 +718,7 @@ function ruleRow(rule = {}) {
       .map((s) => `<option value="${esc(s.site)}"${s.site === site ? ' selected' : ''}>${esc(siteName(s.site))}</option>`)
       .join('')}</select>
     <select class="r-sort"></select>
-    <select data-filter="color"></select>
-    <select data-filter="badge"></select>
+    <span class="r-filters"></span>
     <input class="r-limit" type="number" min="1" max="1000" step="1" value="${Math.max(1, Math.round(Number(rule.limit) || RULE_LIMIT))}"> 条
     <button class="btn sm" type="button" data-del-rule>删</button>
     <span class="r-hint"></span>`;
@@ -740,18 +740,24 @@ function fillSort(row, want) {
   row.querySelector('.r-hint').textContent = ab.tags === false ? '该站不带标签' : '';
 }
 
-/** 筛选下拉：该站没声明的键整个藏起来——给一个选了也不生效的下拉只会骗人。留空 = 全部。 */
+/** 筛选下拉：按该站声明的键现场生成，没声明的键根本不出现——给一个选了也不生效的下拉只会骗人。
+ *  键的顺序照词表走（词表没有的键排后面），留空 = 全部。 */
 function fillFilters(row, want = {}) {
-  for (const sel of row.querySelectorAll('[data-filter]')) {
+  const ab = abilitiesOf(row.querySelector('.r-site').value).filters || {};
+  const keys = [...Object.keys(FILTER_LABEL), ...Object.keys(ab)].filter(
+    (k, i, all) => all.indexOf(k) === i && Array.isArray(ab[k]) && ab[k].length,
+  );
+  const box = row.querySelector('.r-filters');
+  box.innerHTML = keys
+    .map(
+      (k) => `<select data-filter="${esc(k)}" aria-label="${esc(FILTER_LABEL[k]?.label || k)}"><option value="">全部</option>${ab[k]
+        .map((v) => `<option value="${esc(v)}">${esc(FILTER_LABEL[k]?.values?.[v] || v)}</option>`)
+        .join('')}</select>`,
+    )
+    .join('');
+  for (const sel of box.querySelectorAll('[data-filter]')) {
     const k = sel.dataset.filter;
-    const vals = abilitiesOf(row.querySelector('.r-site').value).filters?.[k] || [];
-    sel.hidden = !vals.length;
-    sel.innerHTML = vals.length
-      ? `<option value="">全部</option>${vals
-          .map((v) => `<option value="${esc(v)}">${esc(FILTER_LABEL[k]?.values?.[v] || v)}</option>`)
-          .join('')}`
-      : '';
-    sel.value = vals.includes(want?.[k]) ? want[k] : '';
+    sel.value = ab[k].includes(want?.[k]) ? want[k] : '';
   }
 }
 

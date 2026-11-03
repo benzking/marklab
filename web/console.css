@@ -336,6 +336,7 @@ button.sub-item {
 .rule-row select, .rule-row input { font-size: 13px; padding: 5px 8px; border: 1px solid #cfd4dd; border-radius: 7px; background: #fff; }
 .rule-row input { width: 84px; }
 .rule-row .r-hint { font-size: 12.5px; color: #8a91a0; }
+.rule-row .r-filters { display: contents; } /* 筛选下拉按站点现场生成，摆成和别的控件一样的一排 */
 .rule-row select:disabled, .rule-row input:disabled { background: #f3f4f7; color: #a6acb8; }
 .cand-decision { font-size: 12px; }
 .cands { max-height: 46vh; overflow: auto; }

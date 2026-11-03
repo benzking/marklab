@@ -147,7 +147,8 @@ export async function feed(site, key, { page = 1, pageSize = 20 } = {}) {
   await throttle(site);
   try {
     const r = await pack.feed({ key, page, pageSize });
-    return { ...base, total: r.total ?? null, items: r.items };
+    // total 一律不采信：榜单是站方的人工流，给 0 会被订阅当成「翻到底」提前收工（site-pack §11.5）
+    return { ...base, items: r.items };
   } catch (e) {
     console.error(`[feed] ${site} ${key} 失败：${e.message}`);
     return { ...base, error: String(e.message || e).slice(0, 200) };

@@ -273,7 +273,8 @@ export async function search({ keyword, page = 1, pageSize = 20, sort = 'downloa
     pageSize: String(pageSize),
     sort: SORT[sort] || 'downloads',
   });
-  // 语义值原样就是原生值（colorType=multi|single）；单色的收窄效果未实测，见 site-pack.md §11.4
+  // 语义值原样就是原生值（colorType=multi|single，数字 1/2 会被静默忽略）。实测 2026-11-03：
+  // dragon 无筛 38 / multi 36 / single 2，见 site-pack.md §11.4
   if (filters?.color) q.set('colorType', filters.color);
   const r = await fetch(`${API}/api/model/list?${q}`, { headers: LIST_HEADERS });
   if (!r.ok) throw new Error(`Snapmaker HTTP ${r.status}`);

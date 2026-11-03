@@ -237,10 +237,17 @@ filters: {
   `badge`：`picked` / `exclusive` / `curated` / `member` / `cyberbrick` / `supply` /
   `customizable` / `parametric`）。包只声明**自己支持的子集**，值不许重复。
 - 语义键是公共层的词（`color`、`badge`），**原生参数名不出包**：包自己把
-  `{color: 'multi'}` 翻成 `multiColor` / `colorType` 之类。
+  `{color: 'multi'}` 翻成 `multiColor` / `colorType` 之类。原生值不一定等于语义值——
+  Snapmaker 的 `colorType` 恰好就是 `multi` / `single`（数字 `1`/`2` 会被静默忽略，实测
+  dragon 无筛 38 / multi 36 / single 2），MakerWorld 的 `multiColor` 是 `true` / `false`。
+- **同一个语义键在包里可以走不同原生参数**：MakerWorld 的 `supply` / `customizable` 不在
+  `model_tag` 里，而是独立的 `makersSupply` / `customizable` 布尔参数（实测 `model_tag=makersSupply`
+  被静默忽略，total 与不筛时同为 3698）。翻译怎么写是包的自由，语义键不变。
 - **不写 = 一个都不支持**。公共层 `search.filterFor(site, filters)` 会丢掉词表外的键、
   词表外的值、以及本站没声明的值，只留一行 `console.warn`——筛选失效不该让订阅停摆。
 - 控制台按 `abilities.filters` 出下拉：本站没声明的键**整个不出现**，不给「选了也不生效」的选项。
+  加新值只需改 `FILTERS` 词表 + 包里的翻译；`web/console.js` 的 `FILTER_LABEL` 只放人话，
+  没写标签的值直接显示原词（和 §11.2 的 `SORT_LABEL` 一个规矩，不进包）。
 
 ### 11.5 榜单源 `feeds` + `feed()`
 

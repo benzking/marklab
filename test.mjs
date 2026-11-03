@@ -928,7 +928,7 @@ test('站点包契约：形状全过 checkPack，能力声明在词表里', asyn
   for (const p of sitePacks.all()) {
     assert.deepEqual(checkPack(p), [], `${p.site} 不合契约`);
     if (p.searchOptions) assert.ok(isSearchOptions(p.searchOptions), `${p.site}.searchOptions 形状不对`);
-    // 筛选子集只能从公共词表里挑：包偷偷加值要红，词表是唯一真相（spec §11.3）
+    // 筛选子集只能从公共词表里挑：包偷偷加值要红，词表是唯一真相（site-pack §11.4）
     for (const [k, vs] of Object.entries(p.filters || {})) {
       assert.ok(Object.hasOwn(FILTERS, k), `${p.site}.filters 键 ${k} 不在词表里`);
       for (const v of vs) assert.ok(FILTERS[k].includes(v), `${p.site}.filters.${k} 值 ${v} 不在词表里`);
@@ -1295,7 +1295,7 @@ test('订阅：data/subs.json 每条都有 kind，sites/sort/pageLimit 残留一
   }
   assert.ok(Array.isArray(raw.subs), 'subs 要是数组');
   for (const s of raw.subs) {
-    assert.ok(['keyword', 'author'].includes(s.kind), `每条订阅都要有 kind（keyword/author），实际：${JSON.stringify(s.kind)}`);
+    assert.ok(['keyword', 'author', 'feed'].includes(s.kind), `每条订阅都要有 kind（keyword/author/feed），实际：${JSON.stringify(s.kind)}`);
     for (const dead of ['sites', 'sort', 'pageLimit', 'roundLimit']) {
       assert.equal(dead in s, false, `迁移后不许残留 ${dead}：${s.name || s.id}`);
     }
