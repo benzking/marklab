@@ -208,7 +208,7 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 - MakeRoad **没有签到**，只有积分（`/api/user/integralData.total`，当前账号 0）。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。
-- 五站列表/详情一律匿名（MakerWorld 也已改走 `api.bambulab.cn` 公开 API，见 [`docs/makerworld-no-browser.md`](docs/makerworld-no-browser.md)）；浏览器只剩登录态探测与 MakerWorld 的 f3mf 兜底。
+- 五站列表/详情一律匿名（MakerWorld 也已改走 `api.bambulab.cn` 公开 API，见 [`docs/makerworld-no-browser.md`](docs/makerworld-no-browser.md)）；浏览器只剩四件事：登录态探测、MakerWorld 的 f3mf 兜底、作者主页列表（handle→uid 无公开端点）、分类树（公开 API 只有一级）。
 - 各站搜索排序参数（哪个值是真正的下载量 / 点赞 / 最新）见 [`docs/搜索排序.md`](docs/搜索排序.md)：创想云是 `sortType` 数字、MakerWorld 是 `orderBy` 字符串，无效值一律**静默回落默认**，不报错。
 - 订阅的「按发布时间排序」对 MakerOnline 无效：它的搜索响应里没有发布时间，这些条目排在最后。
 - 作者订阅里 MakerWorld 的主页列表只能走真浏览器（`@handle/upload?page=N` 的 `__NEXT_DATA__`，handle→uid 无公开端点），

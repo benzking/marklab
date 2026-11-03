@@ -1,7 +1,8 @@
 // MakerWorld（拓竹）站点包。
 //
-// 搜索/详情/文件链接的 design JSON 走 api.bambulab.cn 公开 API（纯 node、匿名）；浏览器只剩两处：
-// f3mf 兜底（要登录 + 人机验证）与登录态探测（api 域无公开端点）。
+// 搜索/详情/文件链接的 design JSON 走 api.bambulab.cn 公开 API（纯 node、匿名）；浏览器只剩四件事：
+// f3mf 兜底（要登录 + 人机验证）、登录态探测（api 域无公开端点）、作者主页列表（handle→uid 无公开端点）、
+// 分类树（公开 API 只有一级、没有二级）。
 // 两个特殊处：
 //   1. 唯一会出现「他人件」的站——别人也能给同一个模型加打印配置，`instanceCreator.uid`
 //      与 `designCreator.uid` 不同时那份 3mf 不算作者件（判重时不比，见 spec §5）。
@@ -49,12 +50,19 @@ const API = 'https://api.bambulab.cn';
 
 /** 公开 API 的匿名 GET：JSON 自己 parse，失败抛中文错误并带 HTTP 状态（不回落浏览器）。 */
 async function apiGet(path) {
-  const { status, text } = await httpGet(`${API}${path}`);
-  if (status !== 200) throw new Error(`MakerWorld API ${path.split('?')[0]} 回 HTTP ${status}`);
+  const route = path.split('?')[0];
+  let res;
+  try {
+    res = await httpGet(`${API}${path}`);
+  } catch (e) {
+    throw new Error(`MakerWorld API 连不上（${route}）：${e.message}——api.bambulab.cn 挂了或本机网络不通？`);
+  }
+  const { status, text } = res;
+  if (status !== 200) throw new Error(`MakerWorld API ${route} 回 HTTP ${status}`);
   try {
     return JSON.parse(text);
   } catch {
-    throw new Error(`MakerWorld API 返回的不是 JSON（${path.split('?')[0]}，HTTP ${status}）`);
+    throw new Error(`MakerWorld API 返回的不是 JSON（${route}，HTTP ${status}）`);
   }
 }
 
@@ -68,8 +76,8 @@ export async function meta(url) {
 /** 纯函数：design JSON → meta。映射原样搬自改造前的页内 fetch，形状逐字不变，只把来源标成 api。 */
 export function designToMeta(j, { id, url }) {
   const pic = (p) => (p && (p.url || p)) || '';
-  const n = (v) => (typeof v === 'string' ? Number(v) : v);
-  const filamentsOf = (arr) => (arr || []).map(f => ({ type: f.type, color: f.color, usedG: n(f.usedG), usedM: n(f.usedM) }));
+  const asNum = (v) => (typeof v === 'string' ? Number(v) : v);
+  const filamentsOf = (arr) => (arr || []).map(f => ({ type: f.type, color: f.color, usedG: asNum(f.usedG), usedM: asNum(f.usedM) }));
   const platesOf = (mi) => ((mi && mi.plates) || []).map(p => ({
     index: p.index, name: p.name, timeSec: p.prediction, weightG: p.weight,
     thumb: pic(p.thumbnail), filaments: filamentsOf(p.filaments),
@@ -196,6 +204,7 @@ export async function fileLinks(model) {
     return { id, machine, mine: !c || !model.authorUid || String(c) === String(model.authorUid) };
   });
 
+  // design JSON 拿不到就直接抛：不回落 f3mf（f3mf 要浏览器，不自动回落浏览器是刻意选择，见 issue 12）
   const cdn = cdnFromDesign(await apiGet(`/v1/design-service/design/${model.id}`));
 
   const out = [];
@@ -306,6 +315,8 @@ export function filterQuery(filters = {}) {
 
 // 搜索翻页走站点自己的接口：SSR 的 __NEXT_DATA__ 只装第 1 页，接口的 offset 才是真翻页
 // （offset=0 与 SSR 第 1 页逐条相同，2026-10-31 实测）。
+// shortcut: 默认 score（相关度）序是匿名结果，与登录态页内取数不同（2026-11-04 实测 3418 vs 3429，
+// 前 20 条仅 9 条重合；其余四种排序一致）——抓取要的是匿名结果，等有人要「按登录态个性化排序」再补。
 export async function search({ keyword, page = 1, sort, filters } = {}) {
   const q = new URLSearchParams({
     orderBy: ORDER[sort] || 'score',
@@ -462,6 +473,10 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   console.assert(m.profiles[0].machine === 'A1', 'profiles[0].machine 取第一台兼容机型');
   console.assert(JSON.stringify(m.profiles[0].machines) === '["A1","P1S"]', 'profiles[0].machines 是机型名数组');
   console.assert(m.profiles[0].plateList[0].timeSec === 3540 && m.profiles[0].plateList[0].filaments[0].usedG === 7, 'plateList 逐盘耗时/耗材');
+  console.assert(
+    JSON.stringify(m.profiles[0].filaments) === JSON.stringify([{ type: 'PLA', color: '#fff', usedG: 12, usedM: 4 }]),
+    'profiles[0].filaments 逐色耗材（字符串数字转数值）',
+  );
   console.assert(m.profiles[0].plates === 1 && m.profiles[0].nozzle === '0.4 mm', '盘数/喷嘴');
   console.assert(JSON.stringify(m.files) === JSON.stringify([{ name: 'a.stl', size: 100, type: 'stl', origin: 'author' }]), 'files 是 rawFiles 映射');
   const cdn = cdnFromDesign(design);

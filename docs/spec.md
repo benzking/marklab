@@ -190,8 +190,9 @@ library/<platform>-<id>/
   **配置与本地 3mf 的唯一对应关系**（`kind: 'profile'` 且站点给了配置 id 时写：创想云 `p.id`、
   MakerWorld `fileIds[i]`、MakerOnline `print_profile_id`）。历史数据没有这个字段，
   按 §4.2 的降级规则推断。
-- `via` 记录取数来源：`api`（匿名公开 API / node 直连）或 `channel`（真浏览器页内取数，如 MakerWorld 的
-  f3mf 兜底、用户列表、分类树）。只是多一个取值，不新增字段。
+- `via` 记录取数来源：`api`（匿名公开 API / node 直连）或 `channel`（真浏览器页内取数）。
+  目前只有 MakerWorld 的 `meta` 写这个字段（`api`）；`channel` 是给将来仍在页内取数的站留的取值，
+  现有五站的 `meta` 都不写它。只是多一个取值，不新增字段。
 - **新增字段必须同时进本表**，否则算未定义字段。必填键由 `sites/contract.mjs` 的 `isModelMeta()` 守着（契约测试跑它），多余字段不查——`grab.mjs` 会往上加。
 - **历史数据缺字段按默认值解释，不做批量迁移**：`origin` 缺省算 `author`，`noFiles` 缺省算
   `unknown`（老数据没这个字段），`via` 缺省算「来源不明」。只有字段语义变了才写一次性脚本，
@@ -549,7 +550,8 @@ ADR-0003 的机制，按**接口**而不是按站点：
 - 只从本机常驻 Chromium 进程内现取（`context.cookies()`），不落盘、不打印、不进日志。
 - 探测请求必须有超时（15 秒）；任一站点挂住不许把整个 `/api/console/login` 拖死。
 - MakerWorld 的搜索与详情走 `api.bambulab.cn` 公开 API（匿名、纯 node），不依赖登录态、也不占浏览器；
-  浏览器只剩 f3mf 兜底与登录态探测（api 域无公开端点）。
+  浏览器只剩四件事：f3mf 兜底、登录态探测（api 域无公开端点）、作者主页列表（handle→uid 无公开端点）、
+  分类树（公开 API 只有一级、没有二级）。
 - MakerWorld 的文件先走 CDN 裸链（3mf 在 CDN 上是公开文件，匿名可下）：未登录也能拿到这部分。
   反推不出裸链的配置（没生成过 3D 预览）才回落 f3mf，那时未登录记 `noFiles: "login"`；
   用户登录后统一补抓（控制台的「待补抓」）。
