@@ -8,12 +8,12 @@
 // 加一个成员 = 这里加一行 + 文档加一行；改名只改这里，测试自动跟上。
 export const PACK_FIELDS = {
   required: ['site', 'platform', 'label', 'hosts', 'discover', 'categoriesKey'],
-  optional: ['aliases', 'loginOnly', 'searchOptions', 'rate'],
+  optional: ['aliases', 'loginOnly', 'searchOptions', 'rate', 'filters', 'feeds'],
 };
 
 export const MEMBERS = {
   required: ['match', 'loginState', 'meta', 'fileLinks', 'search'],
-  optional: ['checkin', 'checkinStatus', 'userModels', 'categories'],
+  optional: ['checkin', 'checkinStatus', 'userModels', 'categories', 'feed'],
 };
 
 // ── 共用词表 ───────────────────────────────────────────────────
@@ -23,6 +23,12 @@ export const ORIGINS = ['author', 'other'];
 // 排序键的并集。每个包在自己的 searchOptions.sorts 里声明支持哪几个，
 // 顺序有意义：第一项是该站默认序。空数组 = 本站不支持排序（只能相关度）。
 export const SORTS = ['downloads', 'likes', 'collects', 'newest', 'hot', 'score', 'views', 'prints', 'trend'];
+// 筛选词表：键是语义键（公共层只认这个），值是允许的语义值。包声明子集，
+// 自己翻译成原生参数——公共层不碰 colorType / multiColor 这些名字。
+export const FILTERS = {
+  color: ['multi', 'single'],
+  badge: ['picked', 'exclusive', 'curated', 'member', 'cyberbrick', 'supply', 'customizable', 'parametric'],
+};
 
 // meta() 必须给出的键（fetchedAt / savedFiles / autoTags / dir 由 grab.mjs 补，不在这里）
 export const META_KEYS = ['platform', 'id', 'sourceUrl', 'title', 'author', 'description', 'images', 'stats', 'profiles', 'print', 'category', 'tags'];
@@ -57,6 +63,13 @@ export const isCheckinStatus = (s) => !!s && (s.points === undefined || isNum(s.
 export const isSearchOptions = (o) =>
   !!o && Array.isArray(o.sorts) && o.sorts.every((s) => SORTS.includes(s)) && new Set(o.sorts).size === o.sorts.length && typeof o.tags === 'boolean' && (o.pageSize === undefined || (Number.isInteger(o.pageSize) && o.pageSize > 0));
 
+/** filters：本站支持哪些筛选。键在词表里，值是该键的子集且非空、不重复。 */
+export const isFilters = (o) =>
+  !!o && Object.keys(o).length > 0 && Object.entries(o).every(([k, vs]) => Object.hasOwn(FILTERS, k) && Array.isArray(vs) && vs.length > 0 && new Set(vs).size === vs.length && vs.every((v) => FILTERS[k].includes(v)));
+
+/** feeds：本站声明了哪些榜单源。key 是稳定 ASCII，包内唯一；label 是给人看的话。 */
+export const isFeeds = (f) => Array.isArray(f) && f.length > 0 && f.every((x) => isStr(x?.key) && /^[\x21-\x7e]+$/.test(x.key) && isStr(x?.label) && x.label.trim() !== '') && new Set(f.map((x) => x.key)).size === f.length;
+
 /** 一个包的形状对不对：返回问题列表，空数组就是全对。 */
 export function checkPack(p) {
   const bad = [];
@@ -67,6 +80,11 @@ export function checkPack(p) {
   for (const m of MEMBERS.required) if (typeof p[m] !== 'function') bad.push(`缺必需成员 ${m}`);
   for (const m of MEMBERS.optional) if (p[m] !== undefined && typeof p[m] !== 'function') bad.push(`${m} 要么是函数、要么键不存在`);
   if (p.searchOptions !== undefined && !isSearchOptions(p.searchOptions)) bad.push('searchOptions 形状不对');
+  if (p.filters !== undefined && !isFilters(p.filters)) bad.push('filters 形状不对（键和值都得在词表里，值非空不重复）');
+  if (p.feeds !== undefined && !isFeeds(p.feeds)) bad.push('feeds 形状不对（要非空数组，key 非空 ASCII 且唯一，label 非空）');
+  // 同进同退：有 feeds 没 feed()，控制台会给出一个点了就报错的下拉项；反之没人用得上。
+  if (p.feeds !== undefined && typeof p.feed !== 'function') bad.push('声明了 feeds 却没有 feed() 成员');
+  if (p.feed !== undefined && p.feeds === undefined) bad.push('有 feed() 成员却没声明 feeds');
   if (p.rate !== undefined && !Array.isArray(p.rate?.modelGapSec)) bad.push('rate.modelGapSec 要是 [最小, 最大]');
   return bad;
 }

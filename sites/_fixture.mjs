@@ -2,6 +2,9 @@
 // 它不出现在 sites/index.mjs 的登记表里，生产环境永远看不到。
 const HOSTS = ['fixture.example'];
 
+// 假站点声明的一股流：契约测试拿它走 feed() 的 Page 断言。
+const FEEDS = [{ key: 'weekly', label: '假精选流' }];
+
 export function match(raw) {
   let u;
   try {
@@ -56,6 +59,12 @@ export async function search() {
   return { total: 0, items: [] };
 }
 
+// 榜单源：契约测试用它证明 feed() 也走 Page（与 search() 同一个返回模型）。
+export async function feed({ key } = {}) {
+  if (!FEEDS.some((f) => f.key === key)) throw new Error(`没有这个榜单源：${key}`);
+  return { total: null, items: [] };
+}
+
 export async function userModels() {
   return { total: 0, items: [] };
 }
@@ -67,6 +76,8 @@ export default {
   hosts: HOSTS,
   discover: false,
   categoriesKey: 'fixture',
+  filters: { color: ['multi'], badge: ['picked'] },
+  feeds: FEEDS,
   match,
   matchUser,
   loginState,
@@ -75,4 +86,5 @@ export default {
   categories,
   search,
   userModels,
+  feed,
 };
