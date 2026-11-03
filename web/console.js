@@ -1,8 +1,8 @@
 // 控制台前端：左侧导航 + 六个分页，零框架、零构建，改完刷新就见效。
 // 每个分页各自 try/catch：哪个接口挂了就只在它自己的框里显示红字，不拖白整页。
 
-const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', 'makeronline.cn': 'MakerOnline 国内', 'makeronline.com': 'MakerOnline 国际' };
-const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', 'makeronline.cn': '#ff7d00', 'makeronline.com': '#ff7d00' };
+const SITE = { creality: '创想云', makerworld: 'MakerWorld', snapmaker: 'Snapmaker', 'makeronline.cn': 'MakerOnline 国内', 'makeronline.com': 'MakerOnline 国际', makeroad: 'MakeRoad' };
+const SITE_COLOR = { creality: '#2f6bff', makerworld: '#00b96b', snapmaker: '#1a7cff', 'makeronline.cn': '#ff7d00', 'makeronline.com': '#ff7d00', makeroad: '#7a5af8' };
 const PHASE = { queued: '排队中', fetching: '取页中', parsing: '解析中', downloading: '下载中', done: '已完成', failed: '失败', interrupted: '中断', duplicate: '重复', run: '跑一轮', hit: '命中', stopped: '已停止' };
 const SOURCE = { manual: '手动', refetch: '补抓', subscribe: '订阅', bulk: '批抓' };
 const ACTIVE = new Set(['queued', 'fetching', 'parsing', 'downloading']);
@@ -70,6 +70,7 @@ const siteOfUrl = (url) => {
   if (/snapmaker\.cn/.test(u)) return 'snapmaker';
   if (/makeronline\.com/.test(u)) return 'makeronline.com';
   if (/makeronline\.cn/.test(u)) return 'makeronline.cn';
+  if (/makeroad\.com/.test(u)) return 'makeroad';
   return null;
 };
 const siteDot = (s) => `<i class="sd" style="background:${SITE_COLOR[s] || '#c8ccd4'}"></i>`;
@@ -172,7 +173,7 @@ function renderWorkbench(w) {
   const health = w.health || {};
   const t = w.tasks || {};
 
-  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn']
+  const siteRows = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeronline.com', 'makeroad']
     .map((s) => `<div class="kv"><em>${siteDot(s)}${siteName(s)}</em><b>${fmtNum(by[s])}</b></div>`)
     .join('');
 

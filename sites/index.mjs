@@ -5,9 +5,10 @@ import creality from './creality.mjs';
 import makerworld from './makerworld.mjs';
 import makeronlineCn from './makeronline-cn.mjs';
 import makeronlineCom from './makeronline-com.mjs';
+import makeroad from './makeroad.mjs';
 
 // 顺序 = 控制台里的显示顺序
-const PACKS = [creality, makerworld, snapmaker, makeronlineCn, makeronlineCom];
+const PACKS = [creality, makerworld, snapmaker, makeronlineCn, makeronlineCom, makeroad];
 // aliases 让「搜索/订阅沿用历史键」落到同一个包上（数据键一个域名一个，不共用）
 const BY_NAME = new Map(PACKS.flatMap((p) => [p.site, ...(p.aliases || [])].map((k) => [k, p])));
 

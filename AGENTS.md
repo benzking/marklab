@@ -1,6 +1,6 @@
 # AGENTS.md
 
-模型库：四站（创想云 / MakerWorld / Snapmaker / MakerOnline）抓取 + 本地浏览 + 控制台，
+模型库：五站（创想云 / MakerWorld / Snapmaker / MakerOnline / MakeRoad）抓取 + 本地浏览 + 控制台，
 只依赖一个 npm 包 `playwright-core`（见 ADR-0002）。
 站点取数细节、字段、已知边界在 `README.md`，这里只放每次动手都要用的东西。
 
@@ -44,11 +44,11 @@
 `contract.mjs` 是成员表与八种返回模型，`test.mjs` 用它）·
 `bulk.mjs`（按榜单批量抓）·
 `inspect.mjs`（3mf/stl 预览，自读 zip）· `lib.mjs`（纯函数：站点识别 / Nuxt 还原 / 清洗）·
-`channel.mjs`（浏览器通道：登录态 + 真浏览器取页，唯一入口；标签页也只在它这里开和关）· `session.mjs`（四站登录态探测）·
+`channel.mjs`（浏览器通道：登录态 + 真浏览器取页，唯一入口；标签页也只在它这里开和关）· `session.mjs`（五站登录态探测）·
 `tasks.mjs`（抓取任务队列，全局串行）· `stats.mjs`（工作台数据）· `subs.mjs`（订阅）·
 `events.mjs`（运行日志：`data/events.jsonl` 追加写、5 MB 轮转，见 ADR-0007）·
 `ipwatch.mjs`（高风控 IP 词表 → 订阅，读 `data/ipwatch.json`）·
-`search.mjs`（四站搜索，匿名；频率默认 4 次/分，可按站覆盖；站点不支持的排序键回落该站默认序）· `dup.mjs`（重复检测）· `llm.mjs`（大模型打标签）·
+`search.mjs`（五站搜索，匿名；频率默认 4 次/分，可按站覆盖；站点不支持的排序键回落该站默认序）· `dup.mjs`（重复检测）· `llm.mjs`（大模型打标签）·
 `cats.mjs`（四站 1/2 级分类 + 对照表）· `checkin.mjs`（签到：创想云 + MakerOnline.cn，各站在包里实现 `checkin()` / `checkinStatus()`；`startAuto()` 每 10 分钟探一次自动签）·
 `web/`（前端，零构建；`/console` 是控制台）· `fix.mjs`（一次性维护：按当前白名单重洗库里描述）· `library/`（数据，不入库）· `data/`（任务/订阅/标记，不入库）·
 `docs/categories/`（分类对照，见该目录 README）·

@@ -7,6 +7,7 @@ const SITE = {
   snapmaker: { label: 'Snapmaker', color: '#1a7cff' },
   'makeronline.cn': { label: 'MakerOnline 国内', color: '#ff7d00' },
   'makeronline.com': { label: 'MakerOnline 国际', color: '#ff7d00' },
+  makeroad: { label: 'MakeRoad', color: '#7a5af8' },
 };
 
 const ICON = {

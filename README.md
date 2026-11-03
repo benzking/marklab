@@ -1,4 +1,4 @@
-# marklab · 我的模型库（创想云 / MakerWorld / Snapmaker / MakerOnline 四站合一）
+# marklab · 我的模型库（创想云 / MakerWorld / Snapmaker / MakerOnline / MakeRoad 五站合一）
 
 一个本地小站：贴模型页网址 → 抓成统一数据 → 在一个 MakerWorld 风格的库里搜索、筛选、下载。
 
@@ -17,7 +17,7 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
   顶部粘贴网址回车即入库；下面搜索、站点筛选、标签筛选（含自动的「热门」「精选」）、格式筛选、排序。
 - **详情页**：一个版式吃三个站——大图 + 图集、打印盘列表、介绍正文；右栏标题/作者/来源链接、
   打印配置卡（机型页签 + 配置名 + 耗时/克重/喷嘴/盘数 + 耗材色块克重 + 层高/墙/填充）、文件列表。
-- **打印配置**：右侧上方逐条列（配置名 · 机型 · 打印时间 · 耗材总量 · 盘数），四站同一套字段。
+- **打印配置**：右侧上方逐条列（配置名 · 机型 · 打印时间 · 耗材总量 · 盘数），五站同一套字段。
   鼠标悬停弹卡，内容取各家之长：盘数 / 打印时间 / 耗材总量与长度 / 喷嘴型号 / 文件大小 /
   层高·墙·填充·底板 / **逐色耗材克重** / 兼容机型 / 去原站打开该配置。
 - **打印盘（跟随选中配置）**：右侧配置卡下面，列出该配置的每个盘——盘图、盘名、该盘耗时、该盘克重、
@@ -44,7 +44,7 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 文件条目带 `origin`：`author` 是作者自己的件（默认），`other` 是别人给这个模型加的打印配置，
 作者自己发布的打印配置也算 `author`；别人给这个模型做的配置才算 `other`。判重只用 `author`（见下「重复模型」）。
 `savedFiles` 里另有 `sha256` 文件指纹，跨站确认重复时用它比对。
-`profiles[]` 是四站统一的打印配置形状：`name/machine/machines/plates/plateList/timeSec/timeText/weightG/nozzle/layerHeight/wallLoops/infill/bed/filaments/thumbnail/url`。
+`profiles[]` 是五站统一的打印配置形状：`name/machine/machines/plates/plateList/timeSec/timeText/weightG/nozzle/layerHeight/wallLoops/infill/bed/filaments/thumbnail/url`。
 
 ## 文件预览怎么来的
 
@@ -58,7 +58,7 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 
 ## 分类
 
-左侧栏的一级/二级分类是四站分类体系融合后的统一分类，对照表与归并规则见
+左侧栏的一级/二级分类是四站分类体系融合后的统一分类（MakeRoad 不提供分类树，不参与融合），对照表与归并规则见
 [`docs/categories/`](docs/categories/README.md)。模型按**原站自己的分类名**落到统一分类
 （`lib.mjs` 的 `catIndex` / `catOf`，服务端每次列模型时算，不改 `library/` 里的文件）；
 同名分类（创想云 9 个「其他」）分不清时宁可归到「未分类」，也不猜。
@@ -66,10 +66,10 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 ## 自动标签
 
 - **精选**：站点自带的精选标记（MakerWorld `isStaffPicked`、创想云 `isPickModel`、Snapmaker 推荐位字段）。
-- **热门**：下载量过门槛（`lib.mjs` 的 `HOT`：创想云 1000 / MakerWorld 500 / Snapmaker 30 / MakerOnline 100，可改）。
-  为什么不用榜单接口：四站榜单都要登录或没有公开接口，下载量做相对热度更稳。
+- **热门**：下载量过门槛（`lib.mjs` 的 `HOT`：创想云 1000 / MakerWorld 500 / Snapmaker 30 / MakerOnline 100 / MakeRoad 100，可改）。
+  为什么不用榜单接口：五站榜单都要登录或没有公开接口，下载量做相对热度更稳。
 
-## 四个站点的取数方式（实测）
+## 五个站点的取数方式（实测）
 
 | 站点 | 介绍页 / 打印配置 | 文件 |
 | --- | --- | --- |
@@ -77,10 +77,11 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 | 创想云 | 页面 SSR 的 `__NUXT_DATA__`（注意 SSR 的 `modelList` **只有第一页 5 个 STL**，全量要再打 `/api/cxy/v3/model/fileListPage?pageSize=200`，一个模型常拆出几十个件）：`model-info_*` 是详情，**`3mf-list_*` 是打印配置**（3mf 版页面才有：机型、层高/墙/填充、盘数、耗时、耗材重量与逐色耗材 `colorFilament`、兼容机型表），`3mf-all-printers_*` 是机型表 | STL/文档走 `memberDownload` 换签名 URL，打印配置的 3mf 本体走 `3mfDownload`（body 只有 `{id: profileId}`，只认 `__cxy_token_`/`__cxy_uid_` 请求头，匿名一律 `code 4 Invalid Token`；回 OSS 签名直链，24 小时、匿名可下）——两者都要登录态，都不用开浏览器点按钮 |
 | MakerWorld | `/api/v1/design-service/design/<id>`（整站挡非浏览器 UA，必须在页面里 fetch） | **先走 CDN 裸链**：`instances[].extention.extensionModelFileList` 的预览链 `.../instance/low_compression_glb/<uuid>.zip?at=…` 去掉 query、去掉那层目录、换 `<uuid>.3mf` 就是同一份 3mf（匿名 200、缓存一年、支持 Range），大小对得上 `modelInfo.f3mf.size` 才算命中；反推不出来（没生成 3D 预览的配置）才回落 `/api/v1/design-service/instance/<id>/f3mf`（签名 URL，5 分钟有效，要登录 + 过 geetest） |
 | MakerOnline（`.com` 国际站 / `.cn` 国内站，结构一样） | 页面里的 `window.__NUXT__` 是 IIFE 打包的数据，`vm` 里求值后取 `modelDetailData`（打印配置 / 逐盘耗时克重 / 逐色耗材 / 说明 PDF；国内站还带原始文件清单） | `POST /api/file/download`，要 access token；页面里点「下载 → 下载全部」截签名链接（链接的 `response-content-disposition` 里有原始文件名） |
+| MakeRoad | 页面是 Nuxt 3，但 HTML 只给真浏览器 UA（node 取是空响应）；**API 匿名可用**：`/api/models/detail?id=`、`/api/models/file?id=`（公开 OSS 直链）、`/api/search`、`/api/user/modelList`、`/api/commons/classifyIndex`；配套文档在 OSS 的 `Makeroad_<id>_conf.zip`（固定名，匿名 HEAD 可知有无，只读中央目录拿清单） | 单文件直链匿名 HTTP 直下（HEAD 200，`content-length` = `size`）；打包 zip（`/api/models/download?type=1\|2\|3\|4`）要 `X-Token`，不做 |
 
 浏览器（`channel.mjs`）：`playwright-core` 用 CDP 连上你正在用的那个 Chromium
 （`127.0.0.1:9223`），登录态在进程内现取、不落盘（ADR-0001），所以**你在 Chrome 里登录一次就够了**。
-三站可以拿登录态直接 fetch；MakerWorld 门口有 Cloudflare，只认真浏览器，取页一律走页面内 fetch。
+四站可以拿登录态直接 fetch（MakeRoad 是把 cookie 里的 `X-Token` 当请求头）；MakerWorld 门口有 Cloudflare，只认真浏览器，取页一律走页面内 fetch。
 连不上浏览器就明确报「浏览器没连上」，不假装未登录。
 
 ## 批量抓（按榜单，后台跑）
@@ -127,7 +128,7 @@ setsid nohup node bulk.mjs --loop 6h --limit 50 > logs/bulk.log 2>&1 < /dev/null
   近 7 天入库柱状图（只数带 3mf 的），以及这个站的下载限速与搜索频率
   （改完失焦就存，留空跟随全局，60 秒地板压不下去）。
   顶上的「登录状态刷新」现取一遍，用完即弃，不落盘。
-  现在有五个包（创想云 / MakerWorld / Snapmaker / MakerOnline 国内站 / MakerOnline 海外站）——
+  现在有六个包（创想云 / MakerWorld / Snapmaker / MakerOnline 国内站 / MakerOnline 海外站 / MakeRoad）——
   MakerOnline 的两个域名是两套独立系统，各自成包，互不 import。
 - **设置**：大模型打标签的 baseUrl / apiKey / model，以及待确认的新词。
 
@@ -143,11 +144,11 @@ setsid nohup node bulk.mjs --loop 6h --limit 50 > logs/bulk.log 2>&1 < /dev/null
   × 前 N 条，**没有关键字、规则、匹配、门槛**，站方排出来的流上一条算一条。默认 8 小时一轮，命中的**自动入库**；
   没有每轮名额，积压就慢慢下，节流靠排队闸门。
 - **怎么跑**：拆两段——搜索吃站点限速（慢），判定是本地读盘（快），混在一起只会让限速空转。
-  **订阅任务调度器**只负责搜（每站一个运行器、先进先出，1 分钟 4 次、间隔 ≥15 秒，四站匿名可用），
+  **订阅任务调度器**只负责搜（每站一个运行器、先进先出，1 分钟 4 次、间隔 ≥15 秒，五站匿名可用），
   一轮搜完交给**候选调度器**判定：库里有没有 → 队列里有没有 → 门槛 → 名字匹配，通过的进抓取队列。
   候选清单落 `data/subs/<id>.candidates.json`，每条带 `decision`（`queued` / `no-match` / `threshold` /
   `in-library` / `in-queue`），「为什么没进队列」看这里；候选 ≠ 命中，每轮重新判定，不沿用上次结论。
-- **作者订阅增量**：作者页四站都最新在前，首次翻到底，之后从新往旧扫、连续 20 条都在库里就停（翻不完
+- **作者订阅增量**：作者页五站都最新在前（MakeRoad 是 `editTime` 降序，用户模型接口不吃 `sort` 参数），首次翻到底，之后从新往旧扫、连续 20 条都在库里就停（翻不完
   记页码游标，下轮接着翻）。主页地址：创想云 `…/user/<数字id>`、MakerWorld `…/@<handle>`、
   Snapmaker `space.snapmaker.cn/zh/creator/<数字id>`、MakerOnline `…/user/personalInfo/<uuid>.html`。
   认不出的链接直接报错，不猜。
@@ -200,13 +201,18 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
   但同一个 `POST /api/file/download` 带上 `Platform: ios`（站点给 App 的通道）就直接回签名直链——
   3mf / STL / 文档都通（`file_type` 2 / 1 / 3），纯 node、不开浏览器、不用点按钮。
 - 创想云下「模型文件」列表（STL/CAD）+ 每份打印配置的 3mf 本体（`3mfDownload`，登录态换 24 小时签名直链）；配套文档已抓，下载要登录态。
+- **MakeRoad 的页面 HTML 只给真浏览器 UA**（node 取是空响应），但 **API 匿名全通**：详情、文件直链、搜索、用户模型都不用登录，所以这个包纯 node 取数，浏览器只用来读 `X-Token` 判登录态与取积分。
+- MakeRoad **没有打印配置**（详情里 `printType` / `materialList` / `printerList` 是兼容性列表，页面也没有时间/重量/机型面板）：`profiles: []`、`print: null`。
+- MakeRoad 的**打包 zip 要 `X-Token`**（`/api/models/download?type=1|2|3|4`，匿名一律 `code 50001 无Token`），单文件直链匿名可下，所以模型文件不做 zip。
+- MakeRoad 的**配套文档**（`pptx`/`pdf`）不在文件接口里，只在 `type=4` 的 `Makeroad_<id>_conf.zip` 里；那个 zip 在 OSS 上是**固定名字、匿名可下**，没文档时直接 404。`meta()` 只读 zip **中央目录**（末尾 64 KB）拿清单 → `docs[]`；抓取时 `fileLinks()` 多加一条 `kind:'doc'` 的 zip 链接，`grab.mjs` 下载后解压：与已下模型文件**同 sha256 的条目丢弃**（zip 里常混着模型本体），其余落盘为 `kind:'doc'`，然后删掉整包（解压失败保留 zip 兜底）。zip 里的文件名是服务端哈希（`87221971781058404155.pdf`），站点没给更友好的名字。
+- MakeRoad **没有签到**，只有积分（`/api/user/integralData.total`，当前账号 0）。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。
-- MakerWorld 天然带登录态（只能走真浏览器），「匿名优先」对它不适用；其余三站列表/详情一律匿名。
+- MakerWorld 天然带登录态（只能走真浏览器），「匿名优先」对它不适用；其余四站列表/详情一律匿名。
 - 各站搜索排序参数（哪个值是真正的下载量 / 点赞 / 最新）见 [`docs/搜索排序.md`](docs/搜索排序.md)：创想云是 `sortType` 数字、MakerWorld 是 `orderBy` 字符串，无效值一律**静默回落默认**，不报错。
 - 订阅的「按发布时间排序」对 MakerOnline 无效：它的搜索响应里没有发布时间，这些条目排在最后。
 - 作者订阅里 MakerWorld 的主页列表只能走真浏览器（`@handle/upload?page=N` 的 `__NEXT_DATA__`），
-  浏览器没连上时这一站这轮直接空；其余三站是匿名 HTTP。
+  浏览器没连上时这一站这轮直接空；其余四站是匿名 HTTP。
 
 ## 来历
 

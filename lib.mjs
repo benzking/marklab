@@ -206,7 +206,7 @@ export const iso = (v) => {
 
 // 「热门」门槛：按各站体量定的经验值，觉得不合适直接改这里。
 // 为什么不用榜单接口：三站的榜单都要登录或没有公开接口，用下载量做相对热度更稳。
-export const HOT = { creality: 1000, makerworld: 500, snapmaker: 30, 'makeronline.cn': 100 };
+export const HOT = { creality: 1000, makerworld: 500, snapmaker: 30, 'makeronline.cn': 100, makeroad: 100 };
 
 // 站点自带的「精选」标记 + 下载量过门槛 → 自动标签
 export function autoTags(platform, { downloads, picked } = {}) {

@@ -14,6 +14,7 @@ import path from 'node:path';
 import { ROOT, sanitize, slugify, autoTags, writeJson, noFilesKind } from './lib.mjs';
 import { connectionState, fetchAs, exit, forget } from './channel.mjs';
 import { UA } from './sites/_http.mjs';
+import { readZip } from './inspect.mjs';
 import * as sites from './sites/index.mjs';
 import * as dup from './dup.mjs';
 import * as authneed from './authneed.mjs';
@@ -211,13 +212,44 @@ if (model.print?.plateList?.length) {
 // 站点看到的是「一分钟一个模型 + 模型内慢慢下」，不是一个模型 48 个文件连珠炮。
 const fileGap = () => new Promise((r) => setTimeout(r, 5000 + Math.random() * 5000));
 
+// 配套文档整包（MakeRoad 的 conf.zip）：下到临时文件 → 解压 → 与「这次已下到的模型文件」同 sha256 的
+// 条目丢弃（zip 里常混着模型本体，别存两份）→ 其余落盘为 kind:'doc' → 删掉整包。
+async function grabDocs(url, filesDir, saved, site) {
+  const tmp = path.join(filesDir, '.doc.tmp');
+  const { bytes, sha256 } = await download(url, tmp, site);
+  const buf = await readFile(tmp);
+  await rm(tmp, { force: true });
+  const zip = readZip(buf); // 不是 zip / 解不出就抛，走调用方的失败分支
+  const have = new Set(saved.filter((f) => f.kind === 'model' && f.sha256).map((f) => f.sha256));
+  const out = [];
+  for (const name of zip.names) {
+    const base = name.split('/').pop();
+    if (!base || name.endsWith('/') || name.includes('__MACOSX/') || base === '.DS_Store') continue;
+    const data = zip.read(name);
+    const h = createHash('sha256').update(data).digest('hex');
+    if (have.has(h)) {
+      console.log(`  ~ 配套 ${base} 与已下模型文件相同，丢弃`);
+      continue;
+    }
+    const ext = (base.match(/\.(\w+)$/) || [, 'bin'])[1];
+    const idx = String(saved.length + out.length + 1).padStart(2, '0');
+    const dest = `${idx}-${slugify(base.replace(/\.\w+$/, ''))}.${ext}`;
+    await writeJson(path.join(filesDir, dest), data);
+    out.push({ name: base, path: `files/${dest}`, bytes: data.length, sha256: h, kind: 'doc', origin: 'author' });
+    console.log(`  ✓ 配套 ${base} (${(data.length / 1048576).toFixed(1)} MB)`);
+  }
+  return out;
+}
+
 // 文件落地
 const saved = [];
 const failed = []; // 失败的文件（名字 + 原因），控制台要能说清「差几个、为什么」
 let linkErr = '';
+let linksFromFileLinks = [];
 if (wantFiles) {
   try {
     const links = await pack.fileLinks(model);
+    linksFromFileLinks = links;
     progress({ phase: 'downloading', done: 0, total: links.length });
     for (const [i, f] of links.entries()) {
       if (i > 0) await fileGap();
@@ -239,6 +271,28 @@ if (wantFiles) {
     linkErr = e.message;
     failed.push({ name: '(整批)', reason: classify(e).code });
     console.warn(`  文件下载失败：${e.message}`);
+  }
+}
+
+// 配套文档整包（站点只给这一个 zip，不拆成逐篇链接）：下载 → 解压 → 同 hash 的模型文件丢弃 → 其余当配套
+// 只有 fileLinks() 给了 doc 直链才动手（现在只有 MakeRoad 给）；没给就跳过，不猜 URL。
+// 解压成功后把整包从 saved 与盘上删掉（PDF 已落盘，别存两份）；解压失败则保留 zip 当兜底。
+if (wantFiles && model.docs?.length) {
+  const docLink = linksFromFileLinks.find((f) => f.kind === 'doc');
+  if (docLink) {
+    try {
+      const docSaved = await grabDocs(docLink.url, filesDir, saved, site);
+      const zipIdx = saved.findIndex((f) => f.name === docLink.name);
+      if (zipIdx >= 0) {
+        await rm(path.join(filesDir, saved[zipIdx].path.replace(/^files\//, '')), { force: true });
+        saved.splice(zipIdx, 1);
+      }
+      saved.push(...docSaved);
+    } catch (e) {
+      linkErr = e.message;
+      failed.push({ name: '配套文档', reason: classify(e).code });
+      console.warn(`  配套文档下载失败：${e.message}`);
+    }
   }
 }
 

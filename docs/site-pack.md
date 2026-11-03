@@ -60,7 +60,7 @@
 | 成员 | 签名 | 返回 | 谁有 |
 |---|---|---|---|
 | `checkin` | `({dry = false})` | `CheckinResult`（§11.1） | 创想云、MakerOnline.cn |
-| `userModels` | `({uid, page, pageSize})` | `Page<ModelListItem>`（§11.1） | 五站都有 |
+| `userModels` | `({uid, page, pageSize})` | `Page<ModelListItem>`（§11.1） | 六站都有 |
 | `categories` | `()` | `Category[]`（§11.1） | 创想云、MakerWorld、Snapmaker、makeronline.com（**makeronline.cn 没有**，见 §8） |
 | `checkinStatus` | `()` | `CheckinStatus`（§11.1） | 创想云、MakerOnline.cn |
 | `feed` | `({key, page, pageSize})` | `Page<ModelListItem>`（§11.1，**`total` 恒 `null`**） | 创想云（§11.5） |
@@ -207,22 +207,22 @@ searchOptions: {
 
 ### 11.3 能力矩阵
 
-2026-11-02 实测，`✓` 有 / `✗` 没有 / `△` 有条件。改包时同步这张表。
+2026-11-03 实测，`✓` 有 / `✗` 没有 / `△` 有条件。改包时同步这张表。
 
-| 能力 | 创想云 | MakerWorld | Snapmaker | makeronline.cn | makeronline.com |
-|---|---|---|---|---|---|
-| `loginState` | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `meta` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ |
-| `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ |
-| `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ |
-| `searchOptions.sorts` | trend, newest, views, likes, collects, downloads, prints | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） |
-| `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ |
-| 页大小固定 | 否 | **20** | 否 | 否 | 否 |
-| `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ |
-| `categories` | ✓ | ✓ | ✓ | ✗ | ✓ |
-| `filters` | 颜色、星标/独家/Maker 严选/会员 | 颜色、星标/独家/CyberBrick/耗材供应/可定制/参数化 | 颜色 | ✗ | ✗ |
-| `feeds` | ✓ `weekly-picks`（本周值得打） | ✗ | ✗ | ✗ | ✗ |
-| `checkin` / `checkinStatus` | ✓ / ✓ | ✗ / ✗ | ✗ / ✗ | ✓ / ✓ | ✗ / ✗ |
+| 能力 | 创想云 | MakerWorld | Snapmaker | makeronline.cn | makeronline.com | MakeRoad |
+|---|---|---|---|---|---|---|
+| `loginState` | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `meta` 匿名 | ✓ | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `fileLinks` 匿名 | ✗ 要登录 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| `search` 匿名 | ✓ | ✓（走浏览器） | ✓ | ✓ | ✓ | ✓ |
+| `searchOptions.sorts` | trend, newest, views, likes, collects, downloads, prints | downloads, likes, newest, hot, score | downloads, likes, collects, newest | —（只有默认序，传 `order` 会丢关键词精度） | —（同上） | likes, downloads, newest |
+| `searchOptions.tags` | ✗ | ✓ | ✓（`translatedTags` 译名） | ✗ | ✗ | ✗ |
+| 页大小固定 | 否 | **20** | 否 | 否 | 否 | 否 |
+| `userModels` | ✓ | ✓ 走浏览器 | ✓ | ✓ | ✓ | ✓ |
+| `categories` | ✓ | ✓ | ✓ | ✗ | ✓ | ✗ |
+| `filters` | 颜色、星标/独家/Maker 严选/会员 | 颜色、星标/独家/CyberBrick/耗材供应/可定制/参数化 | 颜色 | ✗ | ✗ | ✗ |
+| `feeds` | ✓ `weekly-picks`（本周值得打） | ✗ | ✗ | ✗ | ✗ | ✗ |
+| `checkin` / `checkinStatus` | ✓ / ✓ | ✗ / ✗ | ✗ / ✗ | ✓ / ✓ | ✗ / ✗ | ✗ / ✓ |
 
 ### 11.4 筛选声明 `filters`
 

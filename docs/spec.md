@@ -26,7 +26,7 @@
 每个站点一个独立包，**不许在公共层写 `if (site === ...)`**。MakerOnline 的 `.cn` 和 `.com`
 是**两个各自独立实现的包**（字段、登录态、接口都不同，不抽公共层，接受约 250 行重复）。
 
-现在的五个包：`snapmaker` / `creality` / `makerworld` / `makeronline.cn` / `makeronline.com`
+现在的六个包：`snapmaker` / `creality` / `makerworld` / `makeronline.cn` / `makeronline.com` / `makeroad`
 （`sites/index.mjs` 登记）。包有两个名字，别混：
 
 - `site`（包键）：区分域名，登录态、cookie、请求头按它取。`makeronline.cn` 与 `makeronline.com` 不同。
@@ -374,7 +374,7 @@ MakerOnline 多条配置常指向同一个 3mf，`fileLinks` 按对象路径去�
 - **关键字订阅**：`keywords[]`（中英文逗号分割）+ `rules[]`（`站点 + 排序 + 筛选 + 前 N 条`，整条订阅共用
   一套规则）+ `matchModes[]`（`name` / `tag`，可多选，任一命中即算）+ 门槛条件。
 - **作者订阅**：`users[]`（主页链接，站点从链接认）。**没有候选规则、没有匹配方式、
-  没有门槛、没有排序**——订阅作者的意图就是「他发的我都要」。固定按站点默认序（四站实测都最新在前）。
+  没有门槛、没有排序**——订阅作者的意图就是「他发的我都要」。固定按站点默认序（五站实测都最新在前）。
 - **榜单订阅**：`feeds[]`（`站点 + 榜单源 + 前 N 条`，可配多条）。**没有关键字、没有候选规则、
   没有匹配方式、没有门槛**——站方排出来的榜，上一条就是命中。
 
@@ -474,8 +474,9 @@ MakerOnline 多条配置常指向同一个 3mf，`fileLinks` 按对象路径去�
 
 #### 作者订阅的增量
 
-四站作者页实测都是**最新在前**，且都不需要传排序参数（2026-11-02）：创想云 `createTime` 降序、
-MakerWorld `createTime` 降序、Snapmaker `published_at` 降序、MakerOnline `mold_id` 降序。
+五站作者页实测都是**最新在前**，且都不需要传排序参数（2026-11-02，MakeRoad 2026-11-03）：创想云 `createTime` 降序、
+MakerWorld `createTime` 降序、Snapmaker `published_at` 降序、MakerOnline `mold_id` 降序、
+MakeRoad `editTime` 降序（用户模型接口不吃 `sort` 参数，传了也忽略）。
 
 - 第一次跑：从第 1 页翻到底，全量入队。
 - 之后每次：从最新往旧扫，**连续 20 条（一页）都已在库里或在下载队列里**就停。

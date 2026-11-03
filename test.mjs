@@ -192,8 +192,8 @@ test('加一个站点只碰一个文件：假站点包注册后就能走 match �
   assert.equal(model.files[0].origin, 'author');
   const links = await pack.fileLinks(model);
   assert.deepEqual(links.map((l) => [l.name, l.kind]), [['a.stl', 'model']]);
-  // 生产登记表里没有它：五个真包 + 刚注册的这一个
-  assert.equal(sitePacks.all().length, 6);
+  // 生产登记表里没有它：六个真包 + 刚注册的这一个
+  assert.equal(sitePacks.all().length, 7);
 });
 
 test('分类对照表把四站每个分类都收进来', () => {
@@ -338,7 +338,7 @@ test('网址只认 hostname 白名单，路径才跑正则（构造网址进不�
   assert.equal(matchPlatform('file:///etc/passwd#https://makerworld.com/models/1'), null);
 });
 
-test('站点包与公共层认同一个网址，四站都已进包', async () => {
+test('站点包与公共层认同一个网址，五站都已进包', async () => {
   const sites = await import('./sites/index.mjs');
   const a = sites.match('https://space.snapmaker.cn/zh/model/1695-kuai-su');
   assert.deepEqual([a.site, a.id], ['snapmaker', '1695']);
@@ -362,13 +362,14 @@ test('站点包与公共层认同一个网址，四站都已进包', async () =>
   // 两个包互不认对方的域（两套登录态，混了就认错人）
   assert.equal(sites.byName('makeronline.cn').match('https://www.makeronline.com/model/x/1.html'), null);
   assert.equal(sites.byName('makeronline.com').match('https://www.makeronline.cn/model/x/1.html'), null);
-  // 四站都进包了，包和公共层对每个站都认同一个 id
+  // 五站都进包了，包和公共层对每个站都认同一个 id
   for (const [url, name, id] of [
     ['https://www.crealitycloud.cn/model-detail/68fddae0d894ed5f6ce386a7', 'creality', '68fddae0d894ed5f6ce386a7'],
     ['https://makerworld.com.cn/zh/models/195581', 'makerworld', '195581'],
     ['https://space.snapmaker.cn/zh/model/1695-kuai-su', 'snapmaker', '1695'],
     ['https://www.makeronline.cn/zh/model/x/207581.html', 'makeronline.cn', '207581'],
     ['https://www.makeronline.com/zh/model/x/341770.html', 'makeronline.com', '341770'],
+    ['https://www.makeroad.com/zh/printable_3D_model/M1000122747', 'makeroad', 'M1000122747'],
   ]) {
     const hit = sites.match(url);
     assert.deepEqual([hit.site, hit.id], [name, id], url);
