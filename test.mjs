@@ -1339,7 +1339,7 @@ test('订阅：老订阅（只有 sites[]）迁移成按站一条规则', async 
   for (const dead of ['sites', 'sort', 'pageLimit', 'roundLimit']) assert.equal(dead in now, false, `迁移后不许残留 ${dead}`);
   // 已经是新形状的不许动
   const fresh = { kind: 'keyword', rules: [{ site: 'snapmaker', sort: 'newest', limit: 20 }], matchModes: ['tag'] };
-  assert.deepEqual(migrateSub({ ...fresh }), fresh, '新形状原样返回');
+  assert.deepEqual(migrateSub({ ...fresh }), { ...fresh, feeds: [] }, '新形状只补 feeds，别的原样返回');
 });
 
 test('订阅：勾了 tag 但该站搜索结果不带标签时，退回用名字判', async () => {
@@ -1400,4 +1400,157 @@ test('配置的作者标识：各站字段不同，没字段就不猜', async ()
   assert.equal(profileByAuthor({ authorUid: 7 }, { creatorUid: 7 }), true, 'MakerWorld 比 creatorUid');
   assert.equal(profileByAuthor({ authorUid: '7' }, { creatorUid: 8 }), false);
   assert.equal(profileByAuthor({ authorUid: 7 }, { name: 'x' }), null, '没字段返回 null，界面不显示');
+});
+
+// ── 订阅第三种：榜单订阅（票 9）+ 候选规则筛选 ──────────────────
+test('订阅：榜单订阅的任务 = 每行一条，带站点/榜单源/前 N 条', async () => {
+  const { planJobs } = await import('./subs.mjs');
+  const jobs = planJobs({
+    kind: 'feed',
+    feeds: [
+      { site: 'creality', feed: 'weekly-picks', limit: 30 },
+      { site: 'makerworld', feed: 'popular', limit: 10 },
+    ],
+    keywords: ['x'],
+    rules: [{ site: 'creality', limit: 20 }],
+  });
+  assert.equal(jobs.length, 2, '两行榜单就是两个任务');
+  assert.deepEqual(jobs[0], { kind: 'feed', site: 'creality', feed: 'weekly-picks', limit: 30 }, '任务要带站点、榜单源与前 N 条');
+  assert.ok(jobs.every((j) => !j.kw && !j.rule && !j.user), '榜单任务没有关键字、规则、作者');
+});
+
+test('订阅：shape 按 kind 清掉不属于它的字段', async () => {
+  // 在临时根里跑：create 会写 data/subs.json，别污染工作树里的真数据
+  const { out } = await runSubs(`
+    import * as subs from './subs.mjs';
+    const feedSub = await subs.create({ name: '榜单', kind: 'feed', feeds: [{ site: 'creality', feed: 'weekly-picks', limit: 25 }], keywords: ['皮卡丘'], rules: [{ site: 'creality', limit: 20 }], matchModes: ['name'], users: [{ site: 'creality', id: 'u1' }], minLikes: 100, minDownloads: 50, pickedOnly: true });
+    const kwSub = await subs.create({ name: '关键字', keywords: ['皮卡丘'], rules: [{ site: 'creality', limit: 20 }], matchModes: ['name'], feeds: [{ site: 'creality', feed: 'weekly-picks', limit: 25 }] });
+    const authorSub = await subs.create({ name: '作者', kind: 'author', users: [{ site: 'creality', id: 'u1' }], keywords: ['皮卡丘'], feeds: [{ site: 'creality', feed: 'weekly-picks', limit: 25 }] });
+    const pick = (s) => ({ kind: s.kind, keywords: s.keywords, users: s.users, rules: s.rules, feeds: s.feeds, matchModes: s.matchModes, minLikes: s.minLikes, minDownloads: s.minDownloads, pickedOnly: s.pickedOnly });
+    console.log(JSON.stringify({ feed: pick(feedSub), kw: pick(kwSub), author: pick(authorSub) }));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.feed.kind, 'feed');
+  assert.deepEqual(r.feed.keywords, [], '榜单订阅没有关键字');
+  assert.deepEqual(r.feed.users, [], '榜单订阅没有作者主页');
+  assert.deepEqual(r.feed.rules, [], '榜单订阅没有候选规则');
+  assert.deepEqual(r.feed.matchModes, [], '榜单订阅没有匹配方式');
+  assert.equal(r.feed.minLikes, 0, '榜单订阅没有门槛');
+  assert.equal(r.feed.minDownloads, 0);
+  assert.equal(r.feed.pickedOnly, false);
+  assert.equal(r.feed.feeds.length, 1, '榜单行留着');
+
+  assert.equal(r.kw.kind, 'keyword');
+  assert.deepEqual(r.kw.feeds, [], '关键字订阅不许留榜单行');
+  assert.equal(r.kw.keywords.length, 1, '关键字留着');
+
+  assert.equal(r.author.kind, 'author');
+  assert.deepEqual(r.author.feeds, [], '作者订阅也不许留榜单行');
+  assert.deepEqual(r.author.keywords, [], '作者订阅没有关键字');
+});
+
+test('订阅：榜单行只收认识的站点与该站声明过的榜单源，limit 夹 1–1000', async () => {
+  const { cleanFeeds } = await import('./subs.mjs');
+  const sitePacks = await import('./sites/index.mjs');
+  sitePacks.registerForTest({ site: 'feedfix', label: '榜单假站点', hosts: ['feedfix.example'], discover: false, feeds: [{ key: 'weekly', label: '假精选流' }], match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }), meta: async () => ({}), fileLinks: async () => [], search: async () => ({ total: 0, items: [] }) });
+  assert.equal(cleanFeeds([{ site: 'feedfix', feed: 'weekly', limit: 25 }])[0].limit, 25);
+  assert.equal(cleanFeeds([{ site: 'feedfix', feed: 'weekly', limit: 5000 }])[0].limit, 1000, '上限 1000');
+  assert.equal(cleanFeeds([{ site: 'feedfix', feed: 'weekly', limit: -3 }])[0].limit, 1, '下限 1');
+  assert.deepEqual(cleanFeeds([{ site: 'no-such-site', feed: 'x', limit: 20 }]), [], '不认识的站点丢掉');
+  assert.deepEqual(cleanFeeds([{ site: 'feedfix', feed: 'no-such-feed', limit: 20 }]), [], '该站没声明过的榜单丢掉');
+  assert.deepEqual(cleanFeeds([{ site: 'makerworld', feed: 'weekly', limit: 20 }]), [], '别站声明过的榜单不能串用');
+  assert.deepEqual(cleanFeeds(null), [], '不是数组就当没有');
+});
+
+test('订阅：候选规则的筛选只留该站声明过的值，空对象存成 null', async () => {
+  const { cleanRules } = await import('./subs.mjs');
+  const r = cleanRules([{ site: 'creality', limit: 20, filters: { color: 'multi', badge: 'nope' } }]);
+  assert.deepEqual(r[0].filters, { color: 'multi' }, '支持的值留下，不支持的值丢掉');
+  assert.equal(cleanRules([{ site: 'creality', limit: 20, filters: {} }])[0].filters, null, '空筛选存成 null，与 sort 同一习惯');
+  assert.equal(cleanRules([{ site: 'creality', limit: 20 }])[0].filters, null, '不传筛选也是 null');
+});
+
+test('订阅：老数据没有 kind / feeds 也能读——kind 按 keyword，feeds 补 []', async () => {
+  const { migrateSub } = await import('./subs.mjs');
+  const old = { id: 'x', rules: [{ site: 'makerworld', sort: 'score', limit: 20 }], matchModes: ['name'] };
+  const now = migrateSub({ ...old });
+  assert.equal(now.kind, 'keyword', '没有 kind 仍按关键字订阅');
+  assert.deepEqual(now.feeds, [], '没有 feeds 补空数组');
+});
+
+test('订阅：榜单订阅翻页收满 limit 条就停，不凑整页；已入库的不进队列；不写候选台账', async () => {
+  const { out } = await runSubs(
+    `
+    import * as sites from './sites/index.mjs';
+    import * as subs from './subs.mjs';
+    import { readFile } from 'node:fs/promises';
+    const pages = [];
+    const item = (n) => ({ site: 'fixture', id: 'm' + n, url: 'https://fixture.example/m' + n, title: '榜单模型 ' + n, author: '作者' });
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async () => ({ total: null, items: [] }),
+      userModels: async () => ({ total: null, items: [] }),
+      feeds: [{ key: 'weekly', label: '假精选流' }],
+      feed: async ({ page }) => {
+        pages.push(page);
+        return { total: null, items: Array.from({ length: 20 }, (_, i) => item((page - 1) * 20 + i + 1)) };
+      },
+    });
+    const sub = await subs.create({ name: 't', kind: 'feed', feeds: [{ site: 'fixture', feed: 'weekly', limit: 25 }] });
+    const r = await subs.run(sub.id);
+    let candFile = null;
+    try { candFile = JSON.parse(await readFile(process.env.MARKLAB_ROOT + '/data/subs/' + sub.id + '.candidates.json', 'utf8')); } catch {}
+    console.log(JSON.stringify({ pages, searched: r.searched, matched: r.hits.length, ids: r.hits.map((h) => h.id), candFile, jobs: r.sub.lastResult.jobs }));
+  `,
+    async (base) => {
+      // 第 3 条已入库：它该被闸掉，但 limit 的 25 条仍然算到它
+      const dir = path.join(base, 'library', 'fixture-m3');
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, 'model.json'), JSON.stringify({ platform: 'fixture', id: 'm3', title: '榜单模型 3', author: '作者', fetchedAt: new Date().toISOString(), savedFiles: [{ name: 'a.stl' }] }));
+    },
+  );
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.deepEqual(r.pages, [1, 2], 'limit=25 只翻两页');
+  assert.equal(r.searched, 2, '两页就是两次取页');
+  assert.equal(r.matched, 24, '第 3 条已入库，25 条里只入队 24 条');
+  assert.equal(r.ids.length, 24);
+  assert.equal(r.ids.includes('m3'), false, '已入库的那条不进队列');
+  assert.equal(r.ids.includes('m25'), true, '第 25 条要入队（硬上限，不许凑整页）');
+  assert.equal(r.ids.includes('m26'), false, '第 26 条不许进来');
+  assert.equal(r.candFile, null, '榜单订阅不写 candidates.json');
+  assert.equal(r.jobs, 1, '一行榜单就是一个任务');
+});
+
+test('订阅：榜单订阅第二轮重扫不重复入队', async () => {
+  const { out } = await runSubs(`
+    import * as sites from './sites/index.mjs';
+    import * as subs from './subs.mjs';
+    import fs from 'node:fs/promises';
+    import path from 'node:path';
+    const item = (n) => ({ site: 'fixture', id: 'm' + n, url: 'https://fixture.example/m' + n, title: '榜单模型 ' + n, author: '作者' });
+    sites.registerForTest({
+      site: 'fixture', label: '假站点', hosts: ['fixture.example'], discover: false,
+      match: () => null, loginState: async () => ({ ok: false, status: 'logged-out' }),
+      meta: async () => { throw new Error('不该走到这里'); }, fileLinks: async () => [],
+      search: async () => ({ total: null, items: [] }),
+      userModels: async () => ({ total: null, items: [] }),
+      feeds: [{ key: 'weekly', label: '假精选流' }],
+      feed: async ({ page }) => ({ total: null, items: page === 1 ? Array.from({ length: 20 }, (_, i) => item(i + 1)) : [] }),
+    });
+    const sub = await subs.create({ name: 't', kind: 'feed', feeds: [{ site: 'fixture', feed: 'weekly', limit: 20 }] });
+    const first = await subs.run(sub.id);
+    // 第一轮排进队的都抓完入库了，第二轮重扫同一股流才该一条都不进
+    for (const hit of first.hits) {
+      const dir = path.join(process.env.MARKLAB_ROOT, 'library', 'fixture-' + hit.id);
+      await fs.mkdir(dir, { recursive: true });
+      await fs.writeFile(path.join(dir, 'model.json'), JSON.stringify({ platform: 'fixture', id: hit.id, title: hit.title, author: '作者', fetchedAt: new Date().toISOString(), savedFiles: [{ name: 'a.stl' }] }));
+    }
+    const second = await subs.run(sub.id);
+    console.log(JSON.stringify({ first: first.hits.length, second: second.hits.length }));
+  `);
+  const r = JSON.parse(out.trim().split('\n').pop());
+  assert.equal(r.first, 20, '第一轮 20 条都入队');
+  assert.equal(r.second, 0, '第二轮同样的 20 条都已入库，一条都不重复入队');
 });

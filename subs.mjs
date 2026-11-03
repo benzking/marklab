@@ -23,10 +23,11 @@ const CAND_DAYS = 30; // 候选 30 天没再出现就清
 export const MATCH_MODES = ['name', 'tag'];
 
 export const DEFAULTS = {
-  kind: 'keyword', // 'keyword' | 'author'，二选一，不靠列表空不空推断
+  kind: 'keyword', // 'keyword' | 'author' | 'feed'，三选一，不靠列表空不空推断
   keywords: [],
   users: [], // [{site, id, name}]
-  rules: [], // [{site, sort, limit}]：站点 + 排序 + 前 N 条（原始结果条数）
+  rules: [], // [{site, sort, limit, filters}]：站点 + 排序 + 筛选 + 前 N 条（原始结果条数）
+  feeds: [], // [{site, feed, limit}]：榜单订阅专用（站点 + 榜单源 key + 前 N 条）
   matchModes: ['name'], // name / tag，任一命中即算
   minLikes: 0,
   minDownloads: 0,
@@ -128,6 +129,9 @@ export function migrateSub(sub) {
     sub.matchModes = ['name'];
     sub.kind = 'keyword';
   }
+  // 老数据没有 kind 仍按 keyword；没有 feeds 补 []（新字段，老订阅不该因此崩）
+  if (!sub.kind) sub.kind = 'keyword';
+  if (!Array.isArray(sub.feeds)) sub.feeds = [];
   delete sub.sites;
   delete sub.sort;
   delete sub.pageLimit;
@@ -178,7 +182,8 @@ function cleanUsers(input) {
   });
 }
 
-/** 候选规则：站点 + 排序 + 前 N 条。排序不在该站能力里就回落该站默认序（不报错，UI 里本来就不出现）。 */
+/** 候选规则：站点 + 排序 + 筛选 + 前 N 条。排序不在该站能力里就回落该站默认序（不报错，UI 里本来就不出现）。
+ *  筛选同理：站点不支持的值直接丢掉（search.filterFor 会记一行日志），订阅照跑。 */
 export function cleanRules(input) {
   if (!Array.isArray(input)) return [];
   return input
@@ -186,16 +191,32 @@ export function cleanRules(input) {
       const site = String(r?.site || '').trim();
       if (!search.allSites().includes(site)) throw new Error(`规则里的站点不认识：${site}`);
       const limit = Math.min(1000, Math.max(1, Math.round(Number(r?.limit) || PAGE)));
-      return { site, sort: search.sortOfSite(site, r?.sort) || null, limit };
+      const filters = search.filterFor(site, r?.filters);
+      return { site, sort: search.sortOfSite(site, r?.sort) || null, limit, filters: Object.keys(filters).length ? filters : null };
+    })
+    .filter(Boolean);
+}
+
+/** 榜单订阅的榜单行：站点 + 榜单源 + 前 N 条。站点/榜单源认不出、limit 不合法 → 丢掉这一行。 */
+export function cleanFeeds(input) {
+  if (!Array.isArray(input)) return [];
+  return input
+    .map((f) => {
+      const site = String(f?.site || '').trim();
+      const feed = String(f?.feed || '').trim();
+      if (!search.allSites().includes(site)) return null;
+      if (!search.feedsOf(site).some((x) => x.key === feed)) return null;
+      return { site, feed, limit: Math.min(1000, Math.max(1, Math.round(Number(f?.limit) || PAGE))) };
     })
     .filter(Boolean);
 }
 
 const cleanModes = (v) => [...new Set((Array.isArray(v) ? v : []).map((m) => String(m).trim()).filter((m) => MATCH_MODES.includes(m)))];
 
-/** 纯函数：一条订阅 → 这一轮要跑的任务（关键字 × 规则，或作者主页）。 */
+/** 纯函数：一条订阅 → 这一轮要跑的任务（关键字 × 规则，作者主页，或一条榜单）。 */
 export function planJobs(sub) {
   if (sub.kind === 'author') return (sub.users || []).map((u) => ({ kind: 'author', site: u.site, user: u }));
+  if (sub.kind === 'feed') return (sub.feeds || []).map((f) => ({ kind: 'feed', site: f.site, feed: f.feed, limit: f.limit }));
   const jobs = [];
   for (const rule of sub.rules || []) for (const kw of sub.keywords || []) jobs.push({ kind: 'keyword', site: rule.site, kw, rule });
   return jobs;
@@ -204,15 +225,27 @@ export function planJobs(sub) {
 /** 校验 + 补默认值。kind 决定哪些字段算数，另一边的残留一律清掉。 */
 function shape(input, prev = {}) {
   const next = { ...DEFAULTS, ...prev, ...input };
-  next.kind = input.kind ?? prev.kind ?? (input.users?.length ? 'author' : 'keyword');
-  if (!['keyword', 'author'].includes(next.kind)) throw new Error('订阅类型只能是 keyword 或 author');
+  // 老数据没有 kind 一律按 keyword 认（票 #9）；显式给了榜单行却没给 kind 才当 feed
+  next.kind = input.kind ?? prev.kind ?? (input.users?.length ? 'author' : input.keywords?.length ? 'keyword' : input.feeds?.length ? 'feed' : 'keyword');
+  if (!['keyword', 'author', 'feed'].includes(next.kind)) throw new Error('订阅类型只能是 keyword、author 或 feed');
   next.keywords = cleanKeywords(next.keywords);
   next.users = cleanUsers(next.users);
   next.rules = cleanRules(next.rules);
+  next.feeds = cleanFeeds(next.feeds);
   next.matchModes = cleanModes(next.matchModes);
   if (next.kind === 'author') {
     if (!next.users.length) throw new Error('作者订阅至少要一个用户主页');
     next.keywords = [];
+    next.rules = [];
+    next.feeds = [];
+    next.matchModes = [];
+    next.minLikes = 0;
+    next.minDownloads = 0;
+    next.pickedOnly = false;
+  } else if (next.kind === 'feed') {
+    if (!next.feeds.length) throw new Error('榜单订阅至少要一行（站点 + 榜单 + 前 N 条）');
+    next.keywords = [];
+    next.users = [];
     next.rules = [];
     next.matchModes = [];
     next.minLikes = 0;
@@ -223,6 +256,7 @@ function shape(input, prev = {}) {
     if (!next.rules.length) throw new Error('关键字订阅至少要一条候选规则（站点 + 排序 + 前 N 条）');
     if (!next.matchModes.length) throw new Error('关键字订阅至少要一种匹配方式（按名字 / 按标签）');
     next.users = [];
+    next.feeds = [];
   }
   return next;
 }
@@ -381,8 +415,32 @@ async function runOnce(id, clock) {
     [...groups].map(async ([site, list]) => {
       for (const job of list) {
         if (!sub.enabled || clock() - t0 > budget) return; // 停用或到点：剩下的下轮接着跑
-        sub.progress = { kw: job.kw || `@${job.user?.name || job.user?.id || ''}`, site, searched, planned: jobs.length, from };
-        const limit = Math.max(1, Number(job.rule?.limit) || PAGE);
+        // 进度条上显示这一轮在跑什么：关键字 / @作者 / 站点·榜单源
+        const what = job.kw || (job.user ? `@${job.user.name || job.user.id}` : `${job.site}/${job.feed}`);
+        sub.progress = { kw: what, site, searched, planned: jobs.length, from };
+        const limit = Math.max(1, Number(job.rule?.limit ?? job.limit) || PAGE);
+        // 榜单订阅：跟作者订阅一样只过库/队列两道闸，但不翻到底——收满 limit 条就停
+        if (job.kind === 'feed') {
+          let taken = 0;
+          for (let page = 1; taken < limit; page++) {
+            if (!sub.enabled || clock() - t0 > budget) return;
+            const r = await search.feed(site, job.feed, { page });
+            searched++;
+            if (r.error) {
+              errors.push(`${site}「${job.feed}」：${r.error}`);
+              break;
+            }
+            if (!r.items.length) break; // 这股流翻到底了
+            for (const item of r.items) {
+              if (taken >= limit) break; // 硬上限：不凑整页
+              taken++;
+              if (libKeys.has(candidateKey(item.site, item.id)) || busy.has(item.url)) continue;
+              hitsFound.push({ ...item, feed: job.feed, matchedAt: new Date().toISOString() });
+            }
+          }
+          done.add(job.i);
+          continue;
+        }
         // 作者订阅的页码游标：首次全量翻不完就接着翻，翻到底才启用「连续 20 条就停」
         const ukey = job.kind === 'author' ? `${site}:${job.user.id}` : null;
         const ac = ukey ? ((sub.authorCursor ||= {})[ukey] ||= { page: 1, done: false }) : null;
@@ -391,7 +449,7 @@ async function runOnce(id, clock) {
           if (!sub.enabled || clock() - t0 > budget) return;
           if (!ac && page > Math.ceil(limit / PAGE)) break; // 前 N 条是硬上限，不许凑整页
           if (ac && !ac.done) ac.page = page; // 这一页没跑完就还从这页开始
-          const r = job.kind === 'author' ? await search.userModels(site, job.user.id, { page }) : await search.search(site, job.kw, { page, sort: job.rule.sort });
+          const r = job.kind === 'author' ? await search.userModels(site, job.user.id, { page }) : await search.search(site, job.kw, { page, sort: job.rule.sort, filters: job.rule.filters });
           searched++;
           if (r.error) {
             // 搜索失败 ≠ 搜到 0 条：记下来，别当成「后面更空」直接收工
