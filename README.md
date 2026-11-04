@@ -75,13 +75,13 @@ node fix.mjs [--dry] [--orphans]                 # 一次性维护：按当前�
 | --- | --- | --- |
 | Snapmaker Space | 页面 SSR（**必须带 `-model` 这种 slug**）里有完整打印配置；基础信息走 `api-models.snapmaker.cn/api/model/detail/<id>` | 私链 CDN，HTTP 直下 |
 | 创想云 | 页面 SSR 的 `__NUXT_DATA__`（注意 SSR 的 `modelList` **只有第一页 5 个 STL**，全量要再打 `/api/cxy/v3/model/fileListPage?pageSize=200`，一个模型常拆出几十个件）：`model-info_*` 是详情，**`3mf-list_*` 是打印配置**（3mf 版页面才有：机型、层高/墙/填充、盘数、耗时、耗材重量与逐色耗材 `colorFilament`、兼容机型表），`3mf-all-printers_*` 是机型表 | STL/文档走 `memberDownload` 换签名 URL，打印配置的 3mf 本体走 `3mfDownload`（body 只有 `{id: profileId}`，只认 `__cxy_token_`/`__cxy_uid_` 请求头，匿名一律 `code 4 Invalid Token`；回 OSS 签名直链，24 小时、匿名可下）——两者都要登录态，都不用开浏览器点按钮 |
-| MakerWorld | `/api/v1/design-service/design/<id>`（整站挡非浏览器 UA，必须在页面里 fetch） | **先走 CDN 裸链**：`instances[].extention.extensionModelFileList` 的预览链 `.../instance/low_compression_glb/<uuid>.zip?at=…` 去掉 query、去掉那层目录、换 `<uuid>.3mf` 就是同一份 3mf（匿名 200、缓存一年、支持 Range），大小对得上 `modelInfo.f3mf.size` 才算命中；反推不出来（没生成 3D 预览的配置）才回落 `/api/v1/design-service/instance/<id>/f3mf`（签名 URL，5 分钟有效，要登录 + 过 geetest） |
+| MakerWorld | `/api/v1/design-service/design/<id>`（`api.bambulab.cn` 公开 API，匿名 node 直连，不用浏览器） | **先走 CDN 裸链**：`instances[].extention.extensionModelFileList` 的预览链 `.../instance/low_compression_glb/<uuid>.zip?at=…` 去掉 query、去掉那层目录、换 `<uuid>.3mf` 就是同一份 3mf（匿名 200、缓存一年、支持 Range），大小对得上 `modelInfo.f3mf.size` 才算命中；反推不出来（没生成 3D 预览的配置）才回落 `/api/v1/design-service/instance/<id>/f3mf`（签名 URL，5 分钟有效，要登录 + 过 geetest） |
 | MakerOnline（`.com` 国际站 / `.cn` 国内站，结构一样） | 页面里的 `window.__NUXT__` 是 IIFE 打包的数据，`vm` 里求值后取 `modelDetailData`（打印配置 / 逐盘耗时克重 / 逐色耗材 / 说明 PDF；国内站还带原始文件清单） | `POST /api/file/download`，要 access token；页面里点「下载 → 下载全部」截签名链接（链接的 `response-content-disposition` 里有原始文件名） |
 | MakeRoad | 页面是 Nuxt 3，但 HTML 只给真浏览器 UA（node 取是空响应）；**API 匿名可用**：`/api/models/detail?id=`、`/api/models/file?id=`（公开 OSS 直链）、`/api/search`、`/api/user/modelList`、`/api/commons/classifyIndex`；配套文档在 OSS 的 `Makeroad_<id>_conf.zip`（固定名，匿名 HEAD 可知有无，只读中央目录拿清单） | 单文件直链匿名 HTTP 直下（HEAD 200，`content-length` = `size`）；打包 zip（`/api/models/download?type=1\|2\|3\|4`）要 `X-Token`，不做 |
 
 浏览器（`channel.mjs`）：`playwright-core` 用 CDP 连上你正在用的那个 Chromium
 （`127.0.0.1:9223`），登录态在进程内现取、不落盘（ADR-0001），所以**你在 Chrome 里登录一次就够了**。
-四站可以拿登录态直接 fetch（MakeRoad 是把 cookie 里的 `X-Token` 当请求头）；MakerWorld 门口有 Cloudflare，只认真浏览器，取页一律走页面内 fetch。
+四站可以拿登录态直接 fetch（MakeRoad 是把 cookie 里的 `X-Token` 当请求头）；MakerWorld 的搜索/详情/design JSON 走 `api.bambulab.cn` 公开 API（匿名、纯 node），只有 f3mf 兜底与登录态探测还要真浏览器。
 连不上浏览器就明确报「浏览器没连上」，不假装未登录。
 
 ## 批量抓（按榜单，后台跑）
@@ -189,7 +189,7 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 - **一个站点包只认一个域名**：`.cn` / `.com` 是两套独立 id 空间（同号是不同模型，实测 makerworld 三例），
   数据键（库目录、判重键）就是域名：`makeronline.cn` / `makeronline.com`。
   `makerworld.com`（世界站）**还没接**，贴它的链接会被当成不认识的站——要接就另开一个包，别加进现有 HOSTS。
-- 创想云 / MakerWorld / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。例外：MakerWorld 走 CDN 裸链的那部分 3mf 匿名就能下，只要求浏览器连着（design JSON 还得在页内取）。
+- 创想云 / MakerOnline 的**文件**都需要本机 Chromium 连着且已登录对应站点；没连上或没登录时介绍页照抓，文件跳过并明确提示（MakerOnline 会直接说「先在浏览器登录 makeronline」）。MakerWorld 走 CDN 裸链的那部分 3mf 匿名就能下（design JSON 也走公开 API，不碰浏览器）；反推不出裸链的配置才要登录 + 在浏览器里过验证。
 - **MakerWorld 没有「按机型」的单独 3mf**：`?machine=N2S / O1C2` 返回的还是同一个文件（同名同大小同 URL），
   机型只是一张兼容列表。A1 / H2C 在详情页当页签展示，不再尝试下三份。
 - MakerWorld 原始上传件（`designExtension.model_files`）的下载接口还没找到，名字与大小记在 `model.json` 里。
@@ -208,11 +208,11 @@ systemctl --user daemon-reload && systemctl --user enable --now marklab.service
 - MakeRoad **没有签到**，只有积分（`/api/user/integralData.total`，当前账号 0）。
 - 站点改版会打断解析：解析点在 `__NUXT_DATA__`、`design-service`、`api-models` + Snapmaker 的 RSC 载荷。
 - 控制台**没有鉴权**，服务监听 `0.0.0.0`（用户明确说先不加）——别往公网暴露。
-- MakerWorld 天然带登录态（只能走真浏览器），「匿名优先」对它不适用；其余四站列表/详情一律匿名。
+- 五站列表/详情一律匿名（MakerWorld 也已改走 `api.bambulab.cn` 公开 API，见 [`docs/makerworld-no-browser.md`](docs/makerworld-no-browser.md)）；浏览器只剩四件事：登录态探测、MakerWorld 的 f3mf 兜底、作者主页列表（handle→uid 无公开端点）、分类树（公开 API 只有一级）。
 - 各站搜索排序参数（哪个值是真正的下载量 / 点赞 / 最新）见 [`docs/搜索排序.md`](docs/搜索排序.md)：创想云是 `sortType` 数字、MakerWorld 是 `orderBy` 字符串，无效值一律**静默回落默认**，不报错。
 - 订阅的「按发布时间排序」对 MakerOnline 无效：它的搜索响应里没有发布时间，这些条目排在最后。
-- 作者订阅里 MakerWorld 的主页列表只能走真浏览器（`@handle/upload?page=N` 的 `__NEXT_DATA__`），
-  浏览器没连上时这一站这轮直接空；其余四站是匿名 HTTP。
+- 作者订阅里 MakerWorld 的主页列表只能走真浏览器（`@handle/upload?page=N` 的 `__NEXT_DATA__`，handle→uid 无公开端点），
+  浏览器没连上时这一站这轮直接空；其余四站是匿名 HTTP（MakerWorld 的搜索/详情已不依赖浏览器，只有作者主页列表还要）。
 
 ## 来历
 

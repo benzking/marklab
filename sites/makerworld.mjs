@@ -1,6 +1,8 @@
 // MakerWorld（拓竹）站点包。
 //
-// 整站对非浏览器 UA 返 403，详情与 f3mf 都必须在真浏览器页内 fetch。
+// 搜索/详情/文件链接的 design JSON 走 api.bambulab.cn 公开 API（纯 node、匿名）；浏览器只剩四件事：
+// f3mf 兜底（要登录 + 人机验证）、登录态探测（api 域无公开端点）、作者主页列表（handle→uid 无公开端点）、
+// 分类树（公开 API 只有一级、没有二级）。
 // 两个特殊处：
 //   1. 唯一会出现「他人件」的站——别人也能给同一个模型加打印配置，`instanceCreator.uid`
 //      与 `designCreator.uid` 不同时那份 3mf 不算作者件（判重时不比，见 spec §5）。
@@ -8,6 +10,7 @@
 //      且不会自己恢复。所以 fileLinks 先走 CDN 裸链（见下），f3mf 只做兜底。
 import * as ch from '../channel.mjs';
 import { sanitize, fmtHours, str, num, iso } from '../lib.mjs';
+import { httpGet } from './_http.mjs';
 
 // 只认 .com.cn。makerworld.com 是**另一套 id 空间**（2026-11-02 实测：同号 1014649/195581/1309981
 // 在两域是完全不同的模型），一个包认两个域就会落进同一个库目录、同一个判重键。
@@ -43,52 +46,73 @@ export async function loginState() {
   return r.status === 200 ? { ok: true, status: 'logged-in', name: r.name || '已登录' } : { ok: false, status: 'logged-out' };
 }
 
+const API = 'https://api.bambulab.cn';
+
+/** 公开 API 的匿名 GET：JSON 自己 parse，失败抛中文错误并带 HTTP 状态（不回落浏览器）。 */
+async function apiGet(path) {
+  const route = path.split('?')[0];
+  let res;
+  try {
+    res = await httpGet(`${API}${path}`);
+  } catch (e) {
+    throw new Error(`MakerWorld API 连不上（${route}）：${e.message}——api.bambulab.cn 挂了或本机网络不通？`);
+  }
+  const { status, text } = res;
+  if (status !== 200) throw new Error(`MakerWorld API ${route} 回 HTTP ${status}`);
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new Error(`MakerWorld API 返回的不是 JSON（${route}，HTTP ${status}）`);
+  }
+}
+
 export async function meta(url) {
   const hit = match(url);
   if (!hit) throw new Error('不是 MakerWorld 模型网址');
-  const { id } = hit;
-  const js = `(async () => {
-    const j = await (await fetch('/api/v1/design-service/design/${id}', { headers: { accept: 'application/json' } })).json();
-    const pic = (p) => (p && (p.url || p)) || '';
-    const num = (v) => (typeof v === 'string' ? Number(v) : v);
-    const filamentsOf = (arr) => (arr || []).map(f => ({ type: f.type, color: f.color, usedG: num(f.usedG), usedM: num(f.usedM) }));
-    const platesOf = (mi) => ((mi && mi.plates) || []).map(p => ({
-      index: p.index, name: p.name, timeSec: p.prediction, weightG: p.weight,
-      thumb: pic(p.thumbnail), filaments: filamentsOf(p.filaments),
-    }));
-    return {
-      title: j.title, author: (j.designCreator && (j.designCreator.name || j.designCreator.handle)) || '',
-      authorUid: j.designCreator?.uid || null,
-      authorAvatar: (j.designCreator && (j.designCreator.avatar || j.designCreator.avatarUrl)) || '',
-      description: j.summary || j.description || '', cover: j.coverUrl || j.coverLandscape || '',
-      likes: j.likeCount, downloads: j.downloadCount, collects: j.collectionCount, comments: j.commentCount,
-      createTime: j.createTime, updateTime: j.updateTime, tags: (j.tags || []).map(t => t.name || t).filter(Boolean),
-      picked: Boolean(j.isStaffPicked),
-      category: ((j.categories || [])[0] && (j.categories[0].name || j.categories[0].nameTranslated)) || '',
-      instances: (j.instances || []).map(i => {
-        const mi = (i.extention && i.extention.modelInfo) || {};
-        const compat = mi.compatibility ? [mi.compatibility] : [];
-        return {
-          id: i.id, title: i.title, cover: pic(i.cover), pictures: (i.pictures || []).map(pic).filter(Boolean),
-          downloads: i.downloadCount, prints: i.printCount, isDefault: i.isDefault,
-          timeSec: i.prediction, weightG: i.weight, materialCnt: i.materialCnt, needAms: i.needAms,
-          instanceCreator: i.instanceCreator ? (i.instanceCreator.name || true) : null,
-          creatorUid: i.instanceCreator?.uid || null,
-          ratingCount: i.ratingCount, ratingTotal: i.ratingScoreTotal,
-          projectSettings: mi.projectSettings || {}, plates: platesOf(mi),
-          filaments: filamentsOf(i.instanceFilaments),
-          machines: [...compat, ...(mi.otherCompatibility || [])].map(m => ({ name: m.devProductName, code: m.devModelName, nozzle: m.nozzleDiameter })),
-        };
-      }),
-      rawFiles: ((j.designExtension && j.designExtension.model_files) || []).map(f => ({ name: f.modelName, size: f.modelSize, type: f.modelType, origin: 'author' })),
-    };
-  })()`;
-  const { value: d, via } = await ch.evalInPage(hit.url, js, { wait: 6000 });
+  const raw = await apiGet(`/v1/design-service/design/${hit.id}`);
+  return designToMeta(raw, hit);
+}
+
+/** 纯函数：design JSON → meta。映射原样搬自改造前的页内 fetch，形状逐字不变，只把来源标成 api。 */
+export function designToMeta(j, { id, url }) {
+  const pic = (p) => (p && (p.url || p)) || '';
+  const asNum = (v) => (typeof v === 'string' ? Number(v) : v);
+  const filamentsOf = (arr) => (arr || []).map(f => ({ type: f.type, color: f.color, usedG: asNum(f.usedG), usedM: asNum(f.usedM) }));
+  const platesOf = (mi) => ((mi && mi.plates) || []).map(p => ({
+    index: p.index, name: p.name, timeSec: p.prediction, weightG: p.weight,
+    thumb: pic(p.thumbnail), filaments: filamentsOf(p.filaments),
+  }));
+  const d = {
+    title: j.title, author: (j.designCreator && (j.designCreator.name || j.designCreator.handle)) || '',
+    authorUid: j.designCreator?.uid || null,
+    authorAvatar: (j.designCreator && (j.designCreator.avatar || j.designCreator.avatarUrl)) || '',
+    description: j.summary || j.description || '', cover: j.coverUrl || j.coverLandscape || '',
+    likes: j.likeCount, downloads: j.downloadCount, collects: j.collectionCount, comments: j.commentCount,
+    createTime: j.createTime, updateTime: j.updateTime, tags: (j.tags || []).map(t => t.name || t).filter(Boolean),
+    picked: Boolean(j.isStaffPicked),
+    category: ((j.categories || [])[0] && (j.categories[0].name || j.categories[0].nameTranslated)) || '',
+    instances: (j.instances || []).map(i => {
+      const mi = (i.extention && i.extention.modelInfo) || {};
+      const compat = mi.compatibility ? [mi.compatibility] : [];
+      return {
+        id: i.id, title: i.title, cover: pic(i.cover), pictures: (i.pictures || []).map(pic).filter(Boolean),
+        downloads: i.downloadCount, prints: i.printCount, isDefault: i.isDefault,
+        timeSec: i.prediction, weightG: i.weight, materialCnt: i.materialCnt, needAms: i.needAms,
+        instanceCreator: i.instanceCreator ? (i.instanceCreator.name || true) : null,
+        creatorUid: i.instanceCreator?.uid || null,
+        ratingCount: i.ratingCount, ratingTotal: i.ratingScoreTotal,
+        projectSettings: mi.projectSettings || {}, plates: platesOf(mi),
+        filaments: filamentsOf(i.instanceFilaments),
+        machines: [...compat, ...(mi.otherCompatibility || [])].map(m => ({ name: m.devProductName, code: m.devModelName, nozzle: m.nozzleDiameter })),
+      };
+    }),
+    rawFiles: ((j.designExtension && j.designExtension.model_files) || []).map(f => ({ name: f.modelName, size: f.modelSize, type: f.modelType, origin: 'author' })),
+  };
   const inst = d.instances.find((i) => i.isDefault) || d.instances[0] || {};
   return {
     platform: 'makerworld',
     id,
-    sourceUrl: hit.url,
+    sourceUrl: url,
     title: d.title,
     author: d.author,
     authorUid: d.authorUid,
@@ -114,7 +138,7 @@ export async function meta(url) {
       filaments: inst.filaments || [],
       plateList: inst.plates || [],
       machines: inst.machines || [],
-      source: via,
+      source: 'api',
     },
     // machines 是兼容机型列表（一份文件 14 台机器都能打），不是每机型一个文件
     profiles: d.instances.map((i) => ({
@@ -137,11 +161,11 @@ export async function meta(url) {
       thumbnail: i.cover || '',
       isDefault: i.isDefault,
       creatorUid: i.creatorUid,
-      url: `${hit.url}#profileId-${i.id}`,
+      url: `${url}#profileId-${i.id}`,
     })),
     files: d.rawFiles,
     fileIds: d.instances.map((i) => i.id),
-    via,
+    via: 'api',
   };
 }
 
@@ -151,6 +175,19 @@ export function threeMfFrom(preview) {
   const p = String(preview || '').split('?')[0];
   const uuid = p.split('/').pop().replace(/\.zip$/i, '');
   return p.replace(/[^/]+\/[^/]+$/, `${uuid}.3mf`);
+}
+
+/** 纯函数：design JSON → {[instanceId]: {url, size}}，只收反推得出裸链、且给了 f3mf.size 的配置。 */
+export function cdnFromDesign(j) {
+  const out = {};
+  for (const i of j.instances || []) {
+    const ext = i.extention || {};
+    const f = (ext.extensionModelFileList || []).find((x) => /compression_glb$/.test(x.compressType));
+    const size = (ext.modelInfo && ext.modelInfo.f3mf && ext.modelInfo.f3mf.size) || 0;
+    if (!f || !size) continue;
+    out[i.id] = { url: threeMfFrom(f.modelFile), size };
+  }
+  return out;
 }
 
 /** 每个 instance 一份 3mf。别人加的配置标 other。
@@ -167,19 +204,8 @@ export async function fileLinks(model) {
     return { id, machine, mine: !c || !model.authorUid || String(c) === String(model.authorUid) };
   });
 
-  const js = `(async () => {
-    const j = await (await fetch('/api/v1/design-service/design/${model.id}', { headers: { accept: 'application/json' } })).json();
-    const out = {};
-    for (const i of j.instances || []) {
-      const ext = i.extention || {};
-      const f = (ext.extensionModelFileList || []).find((x) => /compression_glb$/.test(x.compressType));
-      const size = (ext.modelInfo && ext.modelInfo.f3mf && ext.modelInfo.f3mf.size) || 0;
-      if (!f || !size) continue;
-      out[i.id] = { url: (${threeMfFrom.toString()})(f.modelFile), size };
-    }
-    return out;
-  })()`;
-  const { value: cdn } = await ch.evalInPage(model.sourceUrl, js, { wait: 6000 });
+  // design JSON 拿不到就直接抛：不回落 f3mf（f3mf 要浏览器，不自动回落浏览器是刻意选择，见 issue 12）
+  const cdn = cdnFromDesign(await apiGet(`/v1/design-service/design/${model.id}`));
 
   const out = [];
   const rest = [];
@@ -287,35 +313,24 @@ export function filterQuery(filters = {}) {
   return q;
 }
 
-// 搜索翻页只能走站点自己的接口：SSR 的 __NEXT_DATA__ 只装第 1 页（URL 里的 page 它不认，
-// 1–5 页回同一批 20 条），接口的 offset 才是真翻页（offset=0 与 SSR 第 1 页逐条相同，2026-10-31 实测）。
-// 跑在页内：同源带登录态，匿名也能取。
-async function readSearchHits({ keyword, orderBy, offset, extra }) {
+// 搜索翻页走站点自己的接口：SSR 的 __NEXT_DATA__ 只装第 1 页，接口的 offset 才是真翻页
+// （offset=0 与 SSR 第 1 页逐条相同，2026-10-31 实测）。
+// shortcut: 默认 score（相关度）序是匿名结果，与登录态页内取数不同（2026-11-04 实测 3418 vs 3429，
+// 前 20 条仅 9 条重合；其余四种排序一致）——抓取要的是匿名结果，等有人要「按登录态个性化排序」再补。
+export async function search({ keyword, page = 1, sort, filters } = {}) {
   const q = new URLSearchParams({
-    orderBy,
+    orderBy: ORDER[sort] || 'score',
     designType: '0',
     isFromSearchList: 'false',
     keyword,
-    limit: '20',
-    offset: String(offset),
+    limit: '20', // 一页固定 20 条，翻页靠 offset
+    offset: String((page - 1) * 20),
     ref_: '0031_07q_yz',
-    ...extra, // 筛选参数在页外算好再传进来：页内函数拿不到模块作用域
+    ...filterQuery(filters),
   });
-  const r = await fetch(`/api/v1/search-service/select/design2?${q}`, { headers: { accept: 'application/json' } });
-  if (!r.ok) return { status: r.status };
-  const j = await r.json();
-  return { total: j?.total, hits: j?.hits };
-}
-
-export async function search({ keyword, page = 1, sort, filters } = {}) {
-  const orderBy = ORDER[sort] || 'score';
-  // 一页固定 20 条，翻页靠 offset
-  const url = `${SITE}/zh/search/models?keyword=${encodeURIComponent(keyword)}&orderBy=${orderBy}&page=${page}`;
-  const data = await ch.inPage('makerworld', url, readSearchHits, { keyword, orderBy, offset: (page - 1) * 20, extra: filterQuery(filters) }, { wait: 2000 });
-  if (!data || !Array.isArray(data.hits)) {
-    throw new Error(`MakerWorld 搜索接口没回 hits（HTTP ${data?.status ?? '没连上浏览器'}；站点改版或浏览器没开）`);
-  }
-  return { total: num(data.total), items: data.hits.map(normalize) };
+  const j = await apiGet(`/v1/search-service/select/design2?${q}`);
+  if (!Array.isArray(j?.hits)) throw new Error('MakerWorld 搜索接口没回 hits（站点改版？）');
+  return { total: num(j.total), items: j.hits.map(normalize) };
 }
 
 export async function userModels({ uid, page = 1 } = {}) {
@@ -413,5 +428,59 @@ if ((process.argv[1] || '').split(/[\\/]/).pop() === 'makerworld.mjs') {
   console.assert(filterQuery({ badge: 'supply' }).makersSupply === 'true' && !filterQuery({ badge: 'supply' }).model_tag, '供给 → 独立参数（model_tag 不认这个值）');
   console.assert(filterQuery({ badge: 'customizable' }).customizable === 'true', '可定制 → 独立参数');
   console.assert(JSON.stringify(filterQuery({})) === '{}', '不筛就不带参数');
+
+  // 详情 JSON → meta：裁剪过的真站样本（1 个配置、1 块盘、2 个兼容机型、1 条预览链）
+  const design = {
+    title: '测试模型',
+    designCreator: { name: '作者', uid: 42, avatar: 'https://x/a.png' },
+    summary: '<p>说明</p>',
+    coverUrl: 'https://x/cover.png',
+    likeCount: 5, downloadCount: 7, collectionCount: 2, commentCount: 1,
+    createTime: '2024-05-23T09:28:27Z', updateTime: '2024-05-24T09:28:27Z',
+    tags: [{ name: 'benchy' }, 'toy'],
+    isStaffPicked: true,
+    categories: [{ name: '玩具' }],
+    instances: [{
+      id: 9001, title: 'A1 配置', cover: { url: 'https://x/i.png' }, pictures: [{ url: 'https://x/p1.png' }],
+      downloadCount: 3, printCount: 1, isDefault: true, prediction: 3600, weight: 12.34,
+      materialCnt: 1, needAms: false, instanceCreator: { uid: 42, name: '作者' },
+      ratingCount: 1, ratingScoreTotal: 5,
+      instanceFilaments: [{ type: 'PLA', color: '#fff', usedG: '12', usedM: '4' }],
+      extention: {
+        modelInfo: {
+          compatibility: { devProductName: 'A1', devModelName: 'N2S', nozzleDiameter: 0.4 },
+          otherCompatibility: [{ devProductName: 'P1S', devModelName: 'C12', nozzleDiameter: 0.4 }],
+          plates: [{
+            index: 1, name: '盘1', prediction: 3540, weight: 7,
+            thumbnail: { url: 'https://x/t.png' },
+            filaments: [{ type: 'PLA', color: '#f90', usedG: '7', usedM: '2.01' }],
+          }],
+          projectSettings: { layerHeight: 0.2, wallLoops: 2, sparseInfillDensity: 15 },
+          f3mf: { size: 12345 },
+        },
+        extensionModelFileList: [
+          { compressType: 'low_compression_glb', modelFile: 'https://cdn.example/makerworld/model/CNx/1/instance/low_compression_glb/abc-uuid.zip?at=1&key=k' },
+          { compressType: 'high_compression_glb', modelFile: 'https://cdn.example/makerworld/model/CNx/1/instance/high_compression_glb/abc-uuid.zip?at=1&key=k' },
+        ],
+      },
+    }],
+    designExtension: { model_files: [{ modelName: 'a.stl', modelSize: 100, modelType: 'stl' }] },
+  };
+  const m = designToMeta(design, { id: '9001', url: 'https://makerworld.com.cn/zh/models/9001' });
+  const { isModelMeta } = await import('./contract.mjs');
+  console.assert(isModelMeta(m), '详情 JSON → meta 过 isModelMeta');
+  console.assert(m.via === 'api' && m.print.source === 'api', 'node 取数标 via=api / print.source=api');
+  console.assert(m.profiles[0].machine === 'A1', 'profiles[0].machine 取第一台兼容机型');
+  console.assert(JSON.stringify(m.profiles[0].machines) === '["A1","P1S"]', 'profiles[0].machines 是机型名数组');
+  console.assert(m.profiles[0].plateList[0].timeSec === 3540 && m.profiles[0].plateList[0].filaments[0].usedG === 7, 'plateList 逐盘耗时/耗材');
+  console.assert(
+    JSON.stringify(m.profiles[0].filaments) === JSON.stringify([{ type: 'PLA', color: '#fff', usedG: 12, usedM: 4 }]),
+    'profiles[0].filaments 逐色耗材（字符串数字转数值）',
+  );
+  console.assert(m.profiles[0].plates === 1 && m.profiles[0].nozzle === '0.4 mm', '盘数/喷嘴');
+  console.assert(JSON.stringify(m.files) === JSON.stringify([{ name: 'a.stl', size: 100, type: 'stl', origin: 'author' }]), 'files 是 rawFiles 映射');
+  const cdn = cdnFromDesign(design);
+  console.assert(cdn[9001]?.url === 'https://cdn.example/makerworld/model/CNx/1/instance/abc-uuid.3mf', '预览链反推 CDN 3mf 裸链');
+  console.assert(cdn[9001]?.size === 12345, 'CDN 裸链带 f3mf.size');
   console.log('makerworld pack demo ok');
 }
