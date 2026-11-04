@@ -48,14 +48,16 @@
 `tasks.mjs`（抓取任务队列，全局串行）· `stats.mjs`（工作台数据）· `subs.mjs`（订阅）·
 `events.mjs`（运行日志：`data/events.jsonl` 追加写、5 MB 轮转，见 ADR-0007）·
 `ipwatch.mjs`（高风控 IP 词表 → 订阅，读 `data/ipwatch.json`）·
-`search.mjs`（五站搜索，匿名；频率默认 4 次/分，可按站覆盖；站点不支持的排序键回落该站默认序）· `dup.mjs`（重复检测）· `llm.mjs`（大模型打标签）·
+`search.mjs`（五站搜索，匿名；每站每分钟 10 次、间隔 ≥6 秒，聚合搜索与订阅共用这一份配额；
+不传 sort = 站点自己的默认序，传了不支持的键才回落该站默认序）· `dup.mjs`（重复检测）· `llm.mjs`（大模型打标签）·
 `cats.mjs`（四站 1/2 级分类 + 对照表）· `checkin.mjs`（签到：创想云 + MakerOnline.cn，各站在包里实现 `checkin()` / `checkinStatus()`；`startAuto()` 每 10 分钟探一次自动签）·
 `web/`（前端，零构建；`/console` 是控制台）· `fix.mjs`（一次性维护：按当前白名单重洗库里描述）· `library/`（数据，不入库）· `data/`（任务/订阅/标记，不入库）·
 `docs/categories/`（分类对照，见该目录 README）·
 `docs/spec.md`（需求规格：系统应该怎样，冲突时以它为准）·
 `docs/site-pack.md`（**站点包契约**：包该有什么、成员签名、限速三层）·
 `GLOSSARY.md`（词表，动手前先对齐用词）· `docs/adr/`（决策记录：0001 登录态 · 0002 依赖 ·
-0003 匿名优先 · 0004 重复检测 · 0005 控制台）
+0003 匿名优先 · 0004 重复检测 · 0005 控制台 · 0006 按站限速 · 0007 运行日志 ·
+0008 聚合搜索）
 
 ## 跑
 

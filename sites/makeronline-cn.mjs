@@ -396,7 +396,7 @@ const pack = {
   fileLinks,
   // 有关键字时站点强制相关度，sorts 只在无关键字（逛分类）时生效
   // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
-  searchOptions: { sorts: [], tags: false },
+  searchOptions: { sorts: [], tags: false, defaultLabel: '相关度' },
   search,
   userModels,
 };

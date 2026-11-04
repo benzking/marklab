@@ -336,7 +336,7 @@ const pack = {
   fileLinks,
   categories,
   // 关键词搜索只有相关性序：传 order 会丢关键词精度（docs/搜索排序.md）
-  searchOptions: { sorts: [], tags: false },
+  searchOptions: { sorts: [], tags: false, defaultLabel: '相关度' },
   search,
   userModels,
 };

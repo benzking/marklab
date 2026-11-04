@@ -1555,3 +1555,34 @@ test('订阅：榜单订阅第二轮重扫不重复入队', async () => {
   assert.equal(r.first, 20, '第一轮 20 条都入队');
   assert.equal(r.second, 0, '第二轮同样的 20 条都已入库，一条都不重复入队');
 });
+
+test('聚合搜索：插队、配额、零排序参数、已入库标记（ADR-0008）', async () => {
+  const { enqueue, rateOf, resolveSort, RATE } = await import('./search.mjs');
+  const { markInLibrary } = await import('./lib.mjs');
+
+  // 手动搜索插到队头，但同类之间还是先来先走
+  const q = [{ priority: false, n: 1 }, { priority: false, n: 2 }];
+  enqueue(q, { priority: true, n: 'a' });
+  enqueue(q, { priority: true, n: 'b' });
+  enqueue(q, { priority: false, n: 3 });
+  assert.deepEqual(q.map((x) => x.n), ['a', 'b', 1, 2, 3]);
+
+  // 一个数管限速：10 次/分 → 6 秒一次
+  const rate = rateOf('没有这个站');
+  assert.equal(rate.perSite, 10);
+  assert.equal(rate.minGapMs, 6_000);
+  assert.equal(RATE.minGapMs, 6_000);
+
+  // null 就是「不传」，不许回落成下拉框第一项
+  const pack = { searchOptions: { sorts: ['downloads', 'likes'] } };
+  assert.equal(resolveSort(pack, null), null);
+  assert.equal(resolveSort(pack, undefined), null);
+  assert.equal(resolveSort(pack, 'likes'), 'likes');
+  assert.equal(resolveSort(pack, '不认识'), 'downloads');
+
+  const marked = markInLibrary(
+    [{ site: 'makerworld', id: '1' }, { site: 'creality', id: '2' }],
+    new Set(['makerworld-1']),
+  );
+  assert.deepEqual(marked.map((x) => x.inLibrary), [true, false]);
+});

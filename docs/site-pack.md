@@ -112,8 +112,8 @@
 
 - 闸门按站独立：某站的间隔没到，只推迟这个站的任务，别的站照跑。
 - 模型内部文件之间的 5–10 秒（`grab.mjs`）**不可按站配**：它已经是秒级，按站调收益为零。
-- 搜索默认 4 次/分、间隔 ≥15 秒（`search.mjs` `RATE`）；按站调 `searchPerMin` 时
-  `perSite = N`、`minGapMs = 60000/N`，填 4 就等于默认值。
+- 搜索默认 10 次/分、间隔 ≥6 秒（`search.mjs` `RATE.perSite`）；按站调 `searchPerMin` 时
+  `perSite = N`、`minGapMs = 60000/N`，填 10 就等于默认值。聚合搜索与订阅**共用**这一份配额。
 
 ## 7. 加一个站点要做什么
 
@@ -189,21 +189,27 @@
 
 ```js
 searchOptions: {
-  sorts: ['trend', 'newest', 'views', 'likes', 'collects', 'downloads', 'prints'], // 有序：第一项 = 该站默认序；[] = 本站不支持排序
+  sorts: ['trend', 'newest', 'views', 'likes', 'collects', 'downloads', 'prints'], // 顺序只决定下拉框排列；[] = 本站不支持排序
   tags: false,                                         // 必填：搜索结果带不带标签
   pageSize: 20,                                        // 可选：站点页大小固定时写死，调用方别指望改
+  defaultLabel: '综合趋势',                             // 可选：不传排序参数时本站按什么排（人话）
 }
 ```
 
 - 排序键并集（`contract.mjs` 的 `SORTS`）：`downloads` / `likes` / `collects` / `newest` / `hot` / `score` / `views` / `prints` / `trend`（后三个目前只有创想云支持）。
   新增键先加进并集，再用。
+- **`sorts` 的顺序不是默认序**：它只决定下拉框里怎么排。默认序 = **不传 `sort` 参数**，
+  由站点自己给；给人看的名字写在 `defaultLabel` 里（没有就显示「本站默认序」）。
+  聚合搜索就是靠这一条做到「各站按原网站结果，公共层不自行调整」。
 - **`tags` 必填**：本站搜索结果是否自带标签。没有标签就写 `false`——订阅端据此灰掉 tag 勾选框
   （`docs/spec.md` §6.2），不许靠猜。站点只给译名（Snapmaker 的 `translatedTags`）时由包自己归到 `tags`。
 - **不写 `searchOptions` = 只支持默认序、不带标签**，等价于 `sorts: []` + `tags: false`。
 - **回落是公共层的事**：`search.mjs` 收到本站 `sorts` 里没有的键，换成 `sorts[0]`
   （空数组就不带 sort），并把实际用的 `sort` 放回返回值，调用方和日志都看得见。
+  `sort == null`（聚合搜索）则原样透传，**不做回落**——回落才是「自行调整排序」。
   包里的 `SORT[sort] || 默认` 只当第二道保险，不承担语义。
-- 展示文案（「按下载量」）在公共层的 `SORT_LABEL` 表里，**不进包**。
+- 展示文案（「按下载量」）在公共层的 `SORT_LABEL` 表里，**不进包**；只有 `defaultLabel` 例外，
+  它是站点事实（各站默认序根本不同），公共层编不出来。
 
 ### 11.3 能力矩阵
 

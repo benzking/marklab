@@ -390,7 +390,7 @@ const pack = {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20, tags: true },
+  searchOptions: { sorts: ['downloads', 'likes', 'newest', 'hot', 'score'], pageSize: 20, tags: true, defaultLabel: '相关度' },
   filters: { color: ['multi', 'single'], badge: ['picked', 'exclusive', 'cyberbrick', 'supply', 'customizable', 'parametric'] },
   search,
   userModels,

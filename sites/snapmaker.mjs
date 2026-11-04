@@ -266,13 +266,14 @@ export function normalize(raw) {
 
 const LIST_HEADERS = { accept: 'application/json', origin: 'https://space.snapmaker.cn', referer: 'https://space.snapmaker.cn/' };
 
-export async function search({ keyword, page = 1, pageSize = 20, sort = 'downloads', filters } = {}) {
+// sort 不给就不传：站方默认序是「热门」，公共层猜不出来（ADR-0008 §3）
+export async function search({ keyword, page = 1, pageSize = 20, sort, filters } = {}) {
   const q = new URLSearchParams({
     keyword,
     page: String(page),
     pageSize: String(pageSize),
-    sort: SORT[sort] || 'downloads',
   });
+  if (SORT[sort]) q.set('sort', SORT[sort]);
   // 语义值原样就是原生值（colorType=multi|single，数字 1/2 会被静默忽略）。实测 2026-11-03：
   // dragon 无筛 38 / multi 36 / single 2，见 site-pack.md §11.4
   if (filters?.color) q.set('colorType', filters.color);
@@ -343,7 +344,7 @@ const pack = {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: true },
+  searchOptions: { sorts: ['downloads', 'likes', 'collects', 'newest'], tags: true, defaultLabel: '热门' },
   filters: { color: ['multi', 'single'] },
   search,
   userModels,

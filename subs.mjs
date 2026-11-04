@@ -354,6 +354,14 @@ export async function allHits(limit = 200) {
   return rows.sort((a, b) => String(b.matchedAt).localeCompare(String(a.matchedAt))).slice(0, limit);
 }
 
+/** 候选台账里已判定「进队」的条数——首页悬浮栏那个数字。
+ *  shortcut: 滞后一轮（decision 是上一轮跑完时算的，读的时候不重判）, 要实时就改成读时重判。 */
+export async function candidatesQueued() {
+  let n = 0;
+  for (const s of await list()) for (const c of (await candidates(s.id)).items) if (c.decision === 'queued') n++;
+  return n;
+}
+
 /** 候选清单：`{ items: [{ key, sources, title, author, tags, decision, firstSeen, lastSeen }] }` */
 export async function candidates(id) {
   if (!safeId(id)) return { items: [] };

@@ -1008,7 +1008,7 @@ function renderSites() {
       const perMin = rate.searchPerMin ? String(rate.searchPerMin) : '';
       const rateRow = `<div class="kvline">
         <em>下载限速</em><input class="rate-in" type="text" data-gap="${esc(r.site)}" value="${esc(own)}" placeholder="${esc(gap)}" inputmode="numeric"><span class="muted small">秒</span>
-        <em class="ml">搜索限速</em><input class="rate-in" type="text" data-permin="${esc(r.site)}" value="${esc(perMin)}" placeholder="${esc(String(rate.searchPerMinGlobal || 4))}" inputmode="numeric"><span class="muted small">次/分</span>
+        <em class="ml">搜索限速</em><input class="rate-in" type="text" data-permin="${esc(r.site)}" value="${esc(perMin)}" placeholder="${esc(String(rate.searchPerMinGlobal))}" inputmode="numeric"><span class="muted small">次/分</span>
       </div>`;
 
       return `<div class="site-card">${head}${checkinRow}${libRow}${chartRow}${rateRow}</div>`;

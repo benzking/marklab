@@ -9,8 +9,8 @@
 import http from 'node:http';
 import { readFile, readdir, rm, stat, mkdir } from 'node:fs/promises';
 import { inspectFile, PREVIEW_ROOT } from './inspect.mjs';
-import { catIndex, catOf, checkinText, inside, profileByAuthor, profileFile, writeJson, ROOT } from './lib.mjs';
-import { match as matchSite, byName as packOf } from './sites/index.mjs';
+import { catIndex, catOf, checkinText, inside, markInLibrary, profileByAuthor, profileFile, writeJson, ROOT } from './lib.mjs';
+import { match as matchSite, byName as packOf, all as allPacks } from './sites/index.mjs';
 import * as events from './events.mjs';
 import * as tasks from './tasks.mjs';
 import * as stats from './stats.mjs';
@@ -214,6 +214,22 @@ export function invalidateModels() {
 // 所以让任务收尾直接踢一脚缓存
 tasks.onFinish(() => invalidateModels());
 
+// 库里有哪些目录：判定「已入库」只需要目录名。5 秒缓存，够挡住一轮五站请求的重复读盘
+// shortcut: 只看目录在不在（抓一半留下的空目录也算已入库）, 要更准就改读每个目录里的 model.json
+let libCache = { at: 0, keys: new Set() };
+let overviewCache = null;
+async function libKeys() {
+  if (Date.now() - libCache.at < 5000) return libCache.keys;
+  const keys = new Set();
+  try {
+    for (const e of await readdir(LIB, { withFileTypes: true })) if (e.isDirectory()) keys.add(e.name);
+  } catch {}
+  libCache = { at: Date.now(), keys };
+  return keys;
+}
+
+const ACTIVE_PHASES = new Set(['queued', 'fetching', 'parsing', 'downloading']);
+
 async function listModels() {
   let sig = '';
   try {
@@ -328,10 +344,65 @@ const server = http.createServer(async (req, res) => {
         level1: CATS.level1.map((l) => ({ id: l.id, name: l.name, children: l.children.map((c) => ({ id: c.id, name: c.name })) })),
       });
 
+    // 首页顶栏的站点名单：加网址要能收 makeronline.com 的链接，所以不按 discover 过滤
+    // searchable 跟着站点包的 discover 走：前端只照着这个名单发搜索，加站点不用改 web/
+    if (p === '/api/sites')
+      return json(res, 200, allPacks().map(({ site, label }) => ({ site, label, searchable: search.SITES.includes(site) })));
+
+    // 聚合搜索：一次只搜一个站，前端并行发五个，谁回来谁点亮（ADR-0008 §2）。
+    // 零排序参数 = 站点自己的默认序；手动动作插到这一站队头。
+    if (p === '/api/search' && req.method === 'POST') {
+      const body = await readBody(req);
+      const site = String(body.site || '');
+      const kw = String(body.keyword || '').trim();
+      const page = Math.max(1, Math.min(20, Number(body.page) || 1));
+      if (!search.SITES.includes(site)) return json(res, 400, { error: `不在搜索范围：${site}` });
+      if (!kw) return json(res, 400, { error: '关键字是空的' });
+      const r = await search.search(site, kw, { page, priority: true });
+      return json(res, 200, {
+        ...r,
+        defaultLabel: packOf(site)?.searchOptions?.defaultLabel || '本站默认序',
+        items: markInLibrary(r.items, await libKeys()),
+      });
+    }
+
+    // 首页悬浮栏的四个数字 + 卡片状态回流。10 秒一次，所以只给薄字段（tasks 里带 log，太重）
+    if (p === '/api/overview') {
+      // 每个标签页每 10 秒问一次，而计数要扫磁盘（候选台账是逐个订阅文件读的）：
+      // 整包缓存 9 秒，一个进程只算一次，顺带让多个标签页拿到同一份快照
+      const now = Date.now();
+      if (!overviewCache || now - overviewCache.at > 9_000) {
+        await tasks.refresh(); // 别的进程（bulk）也往任务表写，先并入再数
+        const st = tasks.state();
+        const rows = tasks.list({ limit: 300 }).map((t) => ({ url: t.url, phase: t.phase, source: t.source }));
+        const active = rows.filter((t) => ACTIVE_PHASES.has(t.phase));
+        overviewCache = {
+          at: now,
+          body: {
+            counts: {
+              subscribe: active.filter((t) => t.source === 'subscribe').length,
+              candidates: await subs.candidatesQueued(),
+              queued: st.queued,
+              downloading: active.filter((t) => t.phase === 'downloading').length,
+            },
+            active: active.map(({ url, phase }) => ({ url, phase })),
+            recent: rows.filter((t) => !ACTIVE_PHASES.has(t.phase)).slice(0, 50).map(({ url, phase }) => ({ url, phase })),
+          },
+        };
+      }
+      return json(res, 200, overviewCache.body);
+    }
+
     if (p === '/api/grab' && req.method === 'POST') {
       const { url: target } = await readBody(req);
       if (!/^https?:/i.test(target || '')) return json(res, 400, { error: '需要 http(s) 网址' });
-      if (!matchSite(target)) return json(res, 400, { error: '不认识的站点网址' });
+      // 作者主页不是模型页：别让它撞「不认识的站点网址」，指去订阅（ADR-0008 §1）
+      if (!matchSite(target)) {
+        const who = search.parseUserUrl(target);
+        return json(res, 400, {
+          error: who ? '这是作者主页，去控制台建订阅' : '不认识的站点网址',
+        });
+      }
       const low = await diskTooLow();
       if (low) return json(res, 400, low);
       const { task } = tasks.enqueue({ url: target, source: 'manual' });

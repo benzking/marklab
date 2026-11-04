@@ -6,8 +6,8 @@
 ## 站点与模型
 
 **站点 (site)**
-四个抓取目标之一：创想云 / MakerWorld / Snapmaker / MakerOnline。
-不叫「平台」——`platform` 是 `model.json` 里的字段名（取值 `creality|makerworld|snapmaker|makeronline.cn|makeronline.com`），
+五个抓取目标之一：创想云 / MakerWorld / Snapmaker / MakerOnline（.cn 与 .com 各算一个）/ MakeRoad。
+不叫「平台」——`platform` 是 `model.json` 里的字段名（取值 `creality|makerworld|snapmaker|makeronline.cn|makeronline.com|makeroad`），
 说的是数据来源的机器可读 id，不是人嘴里的「那个站」。**一个域名一个 `platform`**，`.cn`/`.com` 不共用。
 
 **模型 (model)**
@@ -201,9 +201,32 @@ MakerOnline 的 .cn 和 .com、MakerWorld 的 .com 和 .com.cn 都是各自独�
 加站点只加包，不改公共层。契约见 `docs/site-pack.md`。
 
 **搜索排序键 (sort key)**
-站点搜索能按什么排：`downloads` / `likes` / `collects` / `newest` / `hot` / `score` 六个词。
-每个站点包用 `searchOptions.sorts` 声明自己支持哪几个（有序，第一项是该站默认序），
-公共层收到本站没声明的键就回落该站默认序，不静默照传。并集在 `sites/contract.mjs` 的 `SORTS`。
+站点搜索能按什么排：`downloads` / `likes` / `collects` / `newest` / `hot` / `score` 等，并集在
+`sites/contract.mjs` 的 `SORTS`。每个站点包用 `searchOptions.sorts` 声明自己支持哪几个，
+**数组顺序只决定下拉框排列，不是默认序**：默认序 = 不传 `sort` 参数，由站点自己给。
+公共层收到本站没声明的键就回落该站默认序，不静默照传。
+
+**默认序标签 (defaultLabel)**
+站点包用一句话说明「不传排序参数时，本站按什么排」（创想云=综合趋势、MakerWorld=相关度、
+Snapmaker=热门、MakerOnline=相关度、MakeRoad=综合）。请求里没有排序键就没有名字可显示，
+这句话只能由包自己给——它是站点事实，不是界面文案。
+
+**聚合搜索 (aggregate search)**
+一次关键字 → 五个站点各搜一次 → 五块结果并排。每站只取第一页，按站点原序展示，
+不混排、不跨站归一。触发只认「回车 / 点搜索」这个明确动作，不是边敲边搜。
+不叫「全站搜索」「统一搜索」——「统一」会被误读成统一排序。
+
+**搜索结果页 (search results page)**
+`#s=<关键字>`，库页的一个视图（不是新页面、不是新站点）。五站各一个分区 + 一行进度胶囊
+（同时是站点筛选）。结果只缓存在内存里，刷新就没了，点「重新搜索」才重发。
+
+**交互式搜索配额 (interactive quota)**
+手动搜索吃的那份搜索限速，与订阅**共用同一把闸门**（不是两份额度）：每站 10 次/分、
+间隔 6 秒，站点可覆盖。手动请求插到队头，订阅排后面。
+
+**悬浮操作栏 (dock)**
+库页右侧固定的竖条：加网址「+」、回到顶部、四个排队数字（订阅 / 候选 / 抓取 / 下载，
+10 秒轮询，`document.hidden` 时跳过）。不叫「浮动按钮」「侧边栏」——侧栏是左边那个筛选栏。
 
 **登录状态刷新 (login refresh)**
 控制台上点一下，对每个站点现取一遍登录态（能拿到的顺带积分），用完即弃，不落盘。

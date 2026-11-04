@@ -484,7 +484,7 @@ const pack = {
   meta,
   fileLinks,
   categories,
-  searchOptions: { sorts: Object.keys(SORT_TYPE), tags: false }, // 声明与映射同源，少一处漂移
+  searchOptions: { sorts: Object.keys(SORT_TYPE), tags: false, defaultLabel: '综合趋势' }, // 声明与映射同源，少一处漂移
   filters: { color: ['multi', 'single'], badge: ['picked', 'exclusive', 'curated', 'member'] },
   feeds: FEEDS.map(({ key, label }) => ({ key, label })), // tag 是包内的事，不下发
   search,

@@ -11,10 +11,10 @@ export const SITES = sites.all().filter((p) => p.discover !== false).map((p) => 
 // 显式指定时允许的键（含别名），订阅校验用它
 // 函数而不是常量：站点包是运行时可注册的（测试里会加假站点），常量会在 import 时就冻住
 export const allSites = () => [...new Set(sites.all().flatMap((p) => [p.site, ...(p.aliases || [])]))];
-export const RATE = { perSite: 4, windowMs: 60_000, minGapMs: 15_000 };
+export const RATE = { perSite: 10, windowMs: 60_000, minGapMs: 6_000 };
 
 /** 某站的搜索配额：站点自定义的每分钟次数 > 全局默认。只配次数，最小间隔按均分推出来
- *  （4 次/分 → 15 秒，正好等于默认值，所以不配的时候行为和以前一模一样）。 */
+ *  （10 次/分 → 6 秒；改限速只改 RATE.perSite 一个数，ADR-0008 §4）。 */
 export function rateOf(site) {
   const n = Number(siteConfigGet()[site]?.searchPerMin);
   if (!Number.isFinite(n) || n <= 0) return RATE;
@@ -45,7 +45,7 @@ export function rateDelay({ last = 0, recent = [] } = {}, now = Date.now(), rate
 
 const lastAt = new Map(); // site -> 上次放行时间
 const recent = new Map(); // site -> 窗口内放行时间
-const lanes = new Map(); // site -> 串行队列，并发调用也不会同时放行
+const lanes = new Map(); // site -> [{ priority, resolve }]，每站一条队列
 
 function waitTurn(site) {
   const now = Date.now();
@@ -59,14 +59,50 @@ function waitTurn(site) {
   lastAt.set(site, now);
 }
 
-// 测试缝：真等 15 秒一条会把测试拖成几分钟，跑测试时关掉节流
+/** 纯函数：往队里加一项。手动动作（priority）插到所有普通请求前面，同类先进先出。 */
+export function enqueue(q, item) {
+  if (!item.priority) {
+    q.push(item);
+    return q;
+  }
+  const at = q.findIndex((x) => !x.priority);
+  q.splice(at === -1 ? q.length : at, 0, item);
+  return q;
+}
+
+// 一次只放行一个，放行完才取下一条；队空就把这条队列删掉，别让 Map 长成垃圾场
+async function drain(site, q) {
+  while (q.length) {
+    await waitTurn(site);
+    q.shift().resolve();
+  }
+  if (lanes.get(site) === q) lanes.delete(site);
+}
+
+// 测试缝：真等 6 秒一条会把测试拖成几分钟，跑测试时关掉节流
 const NO_RATE = process.env.MARKLAB_TEST_NORATE === '1';
 
-function throttle(site) {
+/** 排队等这一站的放行。priority = 人手动点的搜索（聚合搜索），永远排下一个（ADR-0008 §5）。 */
+function throttle(site, { priority = false } = {}) {
   if (NO_RATE) return Promise.resolve();
-  const next = (lanes.get(site) || Promise.resolve()).then(() => waitTurn(site));
-  lanes.set(site, next);
-  return next;
+  let q = lanes.get(site);
+  if (!q) {
+    q = [];
+    lanes.set(site, q);
+  }
+  const wait = new Promise((resolve) => enqueue(q, { priority, resolve }));
+  if (q.length === 1) drain(site, q); // 队列本来是空的，立刻开工
+  return wait;
+}
+
+// 站点接口没有自己的超时：卡住就是永远转圈，还占着这一站的闸门名额
+const TIMEOUT_MS = 20_000;
+function withTimeout(p, what) {
+  let timer;
+  const boom = new Promise((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`${what}超时（${TIMEOUT_MS / 1000} 秒）`)), TIMEOUT_MS);
+  });
+  return Promise.race([p, boom]).finally(() => clearTimeout(timer));
 }
 
 // ── 用户主页：订阅某个作者发过的全部模型 ────────────────────────
@@ -82,7 +118,7 @@ export async function userModels(site, uid, { page = 1, pageSize = 20 } = {}) {
   if (!pack || !id) return base;
   await throttle(site);
   try {
-    const r = await pack.userModels({ uid: id, page, pageSize });
+    const r = await withTimeout(pack.userModels({ uid: id, page, pageSize }), `${site} 作者主页`);
     return { ...base, total: r.total ?? null, items: r.items };
   } catch (e) {
     console.error(`[user] ${site} ${id} 失败：${e.message}`);
@@ -95,6 +131,12 @@ export async function userModels(site, uid, { page = 1, pageSize = 20 } = {}) {
 export function sortOf(pack, sort) {
   const sorts = pack?.searchOptions?.sorts || [];
   return sorts.includes(sort) ? sort : (sorts[0] ?? null);
+}
+
+/** 搜索请求最终带哪个排序键：`null` = 不传，让站点给默认序（ADR-0008 §3）。
+ *  纯函数：聚合搜索传 null 时这里必须原样给 null，别回落 sorts[0]——那是下拉框顺序，不是默认序。 */
+export function resolveSort(pack, sort) {
+  return sort == null ? null : sortOf(pack, sort);
 }
 
 /** 某个站声明了哪些排序（控制台下拉、订阅规则校验都用它，别去 import 具体站点包）。 */
@@ -146,7 +188,7 @@ export async function feed(site, key, { page = 1, pageSize = 20 } = {}) {
   if (!pack || !feedsOf(site).some((f) => f.key === key)) return { ...base, error: `该站没有榜单 ${key}` };
   await throttle(site);
   try {
-    const r = await pack.feed({ key, page, pageSize });
+    const r = await withTimeout(pack.feed({ key, page, pageSize }), `${site} 榜单`);
     // total 一律不采信：榜单是站方的人工流，给 0 会被订阅当成「翻到底」提前收工（site-pack §11.5）
     return { ...base, items: r.items };
   } catch (e) {
@@ -155,25 +197,30 @@ export async function feed(site, key, { page = 1, pageSize = 20 } = {}) {
   }
 }
 
-/** 搜索一个站。返回统一形状；站点失败时给空结果，不拖垮整轮。 */
-export async function search(site, keyword, { page = 1, sort = 'downloads', pageSize = 20, filters } = {}) {
+/** 搜索一个站。返回统一形状；站点失败时给空结果，不拖垮整轮。
+ *  `sort == null`（聚合搜索）= 按站点自己的默认序：不解析、不回落，原样透传（ADR-0008 §3）。
+ *  `priority` = 人手动点的搜索，插到这一站队头。 */
+export async function search(site, keyword, { page = 1, sort = null, pageSize = 20, filters, priority = false } = {}) {
   const kw = String(keyword || '').trim();
   const pack = sites.byName(site);
-  const used = sortOf(pack, sort);
+  const used = resolveSort(pack, sort);
   const clean = filterFor(site, filters);
   if (pack && kw && used !== sort) console.warn(`[search] ${site} 不支持 sort=${sort}，按 ${used || '默认序'} 搜`);
   // total 拿不到就是 null：0 会被订阅当成「到底了」（site-pack.md §11.1）
   const base = { site: pack?.site || site, keyword: kw, page, sort: used, total: null, items: [] };
   if (!pack || !kw) return base;
-  await throttle(site);
+  await throttle(site, { priority });
   try {
-    const r = await pack.search({
-      keyword: kw,
-      page,
-      pageSize,
-      ...(used ? { sort: used } : {}),
-      ...(Object.keys(clean).length ? { filters: clean } : {}),
-    });
+    const r = await withTimeout(
+      pack.search({
+        keyword: kw,
+        page,
+        pageSize,
+        ...(used ? { sort: used } : {}),
+        ...(Object.keys(clean).length ? { filters: clean } : {}),
+      }),
+      `${site} 搜索`,
+    );
     return { ...base, total: r.total ?? null, items: r.items };
   } catch (e) {
     // 调用方要能分清「搜到 0 条」和「搜索失败」——两者对订阅的含义完全不同

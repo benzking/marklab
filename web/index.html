@@ -12,13 +12,12 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"><path d="M12 2.6 20.4 7v10L12 21.4 3.6 17V7L12 2.6Z"/><path d="M3.6 7 12 11.4 20.4 7M12 11.4v10"/></svg>
     <strong>我的模型库</strong>
   </a>
-  <form class="add" id="add-form">
+  <form class="add" id="search-form" role="search">
     <svg class="ico" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="7" cy="7" r="4.6"/><path d="M10.6 10.6 14 14" stroke-linecap="round"/></svg>
-    <label class="sr-only" for="add-url">要抓取的模型页网址</label>
-    <input id="add-url" type="url" placeholder="粘贴模型页网址，回车收进来（创想云 / MakerWorld / Snapmaker / MakerOnline）" autocomplete="off" spellcheck="false">
-    <button type="submit" id="add-btn">添加</button>
+    <label class="sr-only" for="kw">搜关键字，或粘贴模型页网址</label>
+    <input id="kw" type="search" placeholder="搜关键字（五站一起搜）" autocomplete="off" spellcheck="false">
+    <button type="submit" id="kw-btn">搜索</button>
   </form>
-  <span class="topnote">四站一库</span>
   <a class="toplink" href="/console">控制台</a>
 </header>
 
@@ -54,13 +53,39 @@
       <section class="grid" id="grid"></section>
       <div class="empty" id="empty" hidden>
         <p>库里还没有模型。</p>
-        <p class="hint">把创想云 / MakerWorld / Snapmaker 的模型页网址粘到上面，回车就收进来。</p>
+        <p class="hint">点右边「+」，粘贴模型页网址就收进来。</p>
       </div>
     </div>
   </div>
 </main>
 
+<main id="search-view" hidden></main>
 <main id="detail-view" hidden></main>
+
+<!-- 右侧悬浮操作栏：加网址、四个排队数字、回到顶部（ADR-0008 §10） -->
+<div class="dock" id="dock">
+  <button type="button" class="dock-btn dock-add" id="dock-add" title="添加模型网址" aria-label="添加模型网址">
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 3.2v9.6M3.2 8h9.6" stroke-linecap="round"/></svg>
+  </button>
+  <div class="dock-nums" id="dock-nums"></div>
+  <button type="button" class="dock-btn dock-top" id="dock-top" title="回到顶部" aria-label="回到顶部" hidden>
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M8 12.8V3.4M3.8 7.4 8 3.2l4.2 4.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+  </button>
+</div>
+
+<dialog id="add-dlg" class="adddlg" aria-labelledby="add-title">
+  <form id="add-form">
+    <h2 id="add-title">添加模型网址</h2>
+    <p class="hint" id="add-hint">粘贴模型页网址，回车收进来。</p>
+    <label class="sr-only" for="add-url">模型页网址</label>
+    <input id="add-url" type="text" inputmode="url" placeholder="https://…" autocomplete="off" spellcheck="false">
+    <div class="dlg-msg" id="add-msg" role="status" aria-live="polite"></div>
+    <div class="dlg-row">
+      <button type="button" class="btn-ghost" id="add-cancel">取消</button>
+      <button type="submit" class="btn-main" id="add-btn">添加</button>
+    </div>
+  </form>
+</dialog>
 
 <script src="/app.js"></script>
 </body>

@@ -10,6 +10,13 @@ const SITE = {
   makeroad: { label: 'MakeRoad', color: '#7a5af8' },
 };
 
+/** 站点名以站点包为准（/api/sites），颜色是前端的事：新站没配色就灰着。 */
+function siteInfo(site) {
+  const s = SITE[site] || { label: site, color: '#666' };
+  const l = siteLabels.find((x) => x.site === site)?.label;
+  return l ? { ...s, label: l } : s;
+}
+
 const ICON = {
   clock: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><circle cx="8" cy="8" r="6"/><path d="M8 4.6V8l2.3 1.4" stroke-linecap="round"/></svg>',
   weight: '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4"><path d="M3 6h10l1.4 7H1.6L3 6Z" stroke-linejoin="round"/><circle cx="8" cy="3.6" r="1.6"/></svg>',
@@ -176,7 +183,7 @@ function renderSide() {
   }
   if (models.some((m) => !m.cat)) html.push(`<button type="button" class="item${filters.cat === '_' ? ' on' : ''}" data-l1="_">${ICON.folder}<span>未分类</span><em>${n('_')}</em></button>`);
   html.push(
-    `<div class="side-foot"><b>数据来源</b><span>创想云 · MakerWorld<br>Snapmaker · MakerOnline</span><span>${models.length} 个模型，文件存在本地</span></div>`,
+    `<div class="side-foot"><b>数据来源</b><span>${esc(siteLabels.map((s) => s.label).join(' · ') || '正在读取站点…')}</span><span>${models.length} 个模型，文件存在本地</span></div>`,
   );
   $('#side').innerHTML = html.join('');
 }
@@ -201,7 +208,7 @@ function onSideClick(e) {
 }
 
 function siteOf(m) {
-  return SITE[m.platform] || { label: m.platform, color: '#666' };
+  return siteInfo(m.platform);
 }
 function allTags() {
   const set = new Map();
@@ -459,6 +466,7 @@ async function showDetail(dir) {
     } catch {}
   }
   $('#list-view').hidden = true;
+  $('#search-view').hidden = true;
   $('#detail-view').hidden = false;
   $('#detail-view').innerHTML = detail(m);
   window.scrollTo(0, 0);
@@ -504,9 +512,8 @@ async function waitTask(taskId, ms) {
   return false;
 }
 
-async function addModel(url) {
-  $('#add-btn').disabled = true;
-  setStatus('已收到，排队中…（抓取要排限速闸门，可能几分钟，进度看控制台）', true);
+/** 入队一个网址。202 = 已排队；别的话把服务端文案原样带出来（不认识的站点 / 磁盘不足）。 */
+async function grab(url) {
   try {
     const r = await fetch('/api/grab', {
       method: 'POST',
@@ -514,18 +521,77 @@ async function addModel(url) {
       body: JSON.stringify({ url }),
     });
     const j = await r.json();
-    // 202 = 已入队；等它跑完再刷列表
     if (r.status === 202) {
-      $('#add-url').value = '';
-      setStatus('已入队，抓完自动进库（速度受限速闸门限制）', false);
-    } else {
-      setStatus(`没抓成：${j.error || ''}`.slice(0, 1200), false, url);
+      pollOverview();
+      return { ok: true };
     }
+    // 服务端的 400 文案本身就是人话（网址格式 / 不认识的站点 / 作者主页 / 磁盘），原样给
+    return { ok: false, error: String(j.error || `HTTP ${r.status}`).slice(0, 300) };
   } catch (e) {
-    setStatus(`请求失败：${e.message}`, false, url);
-  } finally {
-    $('#add-btn').disabled = false;
+    return { ok: false, error: `请求失败：${e.message}` };
   }
+}
+
+// 弹窗里提交：就地反馈（成功变「已入队 ✓」，失败红框抖一下），不占用顶部状态条
+async function addModel(url, inDialog = false) {
+  const btn = $('#add-btn');
+  const msg = $('#add-msg');
+  if (inDialog) {
+    btn.disabled = true;
+    btn.textContent = '提交中…';
+    msg.textContent = '';
+    msg.classList.remove('bad');
+  } else {
+    setStatus('已收到，排队中…（抓取要排限速闸门，可能几分钟，进度看控制台）', true);
+  }
+  const r = await grab(url);
+  btn.disabled = false;
+  if (r.ok) {
+    if (inDialog) {
+      btn.textContent = '已入队 ✓';
+      msg.textContent = '已排队，抓完自动进库（受限速闸门，可能几分钟）';
+      $('#dock').classList.add('pulse');
+      setTimeout(() => $('#dock').classList.remove('pulse'), 900);
+      setTimeout(closeAdd, 1600);
+    } else {
+      setStatus('已入队，抓完自动进库（速度受限速闸门限制）', false);
+    }
+    return true;
+  }
+  if (inDialog) {
+    if (btn.textContent === '提交中…') btn.textContent = '添加';
+    failAdd(r.error);
+  } else {
+    setStatus(r.error, false, url);
+  }
+  return false;
+}
+
+function failAdd(text) {
+  const msg = $('#add-msg');
+  msg.textContent = text;
+  msg.classList.add('bad');
+  const inp = $('#add-url');
+  inp.classList.remove('shake');
+  void inp.offsetWidth; // 逼一次重排，不然同一个类加不回去
+  inp.classList.add('shake');
+}
+
+function openAdd(url = '') {
+  const dlg = $('#add-dlg');
+  $('#add-msg').textContent = '';
+  $('#add-msg').classList.remove('bad');
+  $('#add-url').value = url;
+  $('#add-url').classList.remove('shake');
+  $('#add-btn').textContent = '添加';
+  if (!dlg.open) dlg.showModal();
+  setTimeout(() => $('#add-url').focus(), 40);
+}
+
+function closeAdd() {
+  $('#add-dlg').close();
+  $('#add-btn').textContent = '添加';
+  $('#add-btn').disabled = false;
 }
 
 async function refetch(dir) {
@@ -561,11 +627,47 @@ async function removeModel(dir) {
 }
 
 // ── 事件 ───────────────────────────────────────────────────────
+// 顶栏那一个框：能当网址就走去添加，其余当关键字去聚合搜索（判别只看 ^https?://，站点正则留在服务端）
+$('#search-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  const v = $('#kw').value.trim();
+  if (!v) return;
+  if (/^https?:\/\//i.test(v)) {
+    addModel(v); // 只入队，状态条反馈；弹窗是右侧「+」的事（ADR-0008 §1）
+    return;
+  }
+  const want = `#s=${encodeURIComponent(v)}`;
+  if (location.hash === want) {
+    showSearch(v, true); // 同一个词再回车 = 重新搜
+  } else {
+    location.hash = want;
+    showSearch(v, true); // hashchange 里那次会命中缓存，不会再打站点
+  }
+});
+
 $('#add-form').addEventListener('submit', (e) => {
   e.preventDefault();
   const url = $('#add-url').value.trim();
-  if (url) addModel(url);
+  if (!url) return;
+  if (!/^https?:\/\//i.test(url)) {
+    failAdd('需要 http(s) 网址');
+    return;
+  }
+  addModel(url, true);
 });
+$('#add-cancel').addEventListener('click', closeAdd);
+$('#dock-add').addEventListener('click', () => openAdd());
+$('#dock-top').addEventListener('click', () => window.scrollTo({ top: 0, behavior: 'smooth' }));
+$('#add-dlg').addEventListener('click', (e) => {
+  if (e.target === $('#add-dlg')) closeAdd(); // 点遮罩关掉，点面板不关
+});
+window.addEventListener(
+  'scroll',
+  () => {
+    $('#dock-top').hidden = window.scrollY < 300;
+  },
+  { passive: true },
+);
 $('#q').addEventListener('input', (e) => {
   filters.q = e.target.value.trim();
   render();
@@ -614,7 +716,12 @@ function route() {
     showDetail(decodeURIComponent(h.slice(3)));
     return;
   }
+  if (h.startsWith('#s=')) {
+    showSearch(decodeURIComponent(h.slice(3)));
+    return;
+  }
   $('#detail-view').hidden = true;
+  $('#search-view').hidden = true;
   $('#list-view').hidden = false;
   filtersFromHash(h);
   syncControls();
@@ -624,7 +731,378 @@ function route() {
   window.scrollTo(0, 0);
 }
 
-load().then(route);
+// ── 聚合搜索：五站各搜一次，谁回来谁点亮（ADR-0008） ─────────────
+// 名单由站点包的 searchable 说了算（/api/sites），下面这份只是拿不到服务端时的兜底
+let SEARCH_SITES = ['creality', 'makerworld', 'snapmaker', 'makeronline.cn', 'makeroad'];
+const SHOWN = 8; // 每站默认显示条数
+const PAGE_SIZE = 20; // 站点包一页给多少条
+const MAX_PAGE = 3; // shortcut: 每站最多翻到第 3 页（约 60 条）, 要更深就得分页参数并重新算配额
+const CACHE_MAX = 5; // 内存里最多留 5 个词：从详情后退零请求，刷新才重搜
+
+const searchCache = new Map(); // 关键字 → 那一轮结果
+const itemByUrl = new Map(); // 结果 url → item，卡片状态回流时按它查
+const chipShown = new Map(); // site → 上次渲染的数字，决定要不要再滚一遍
+let currentSearch = null; // 当前这一轮
+let tab = ''; // '' = 全部；否则只看一个站
+let shown = {}; // site → 已显示条数
+
+// 终态也写全：漏一个，卡片上就会冒出英文原词
+const PHASE_TEXT = {
+  queued: '排队中', fetching: '抓取中', parsing: '解析中', downloading: '下载中',
+  failed: '抓取失败', stopped: '已停止', interrupted: '已中断', incomplete: '抓不完整',
+};
+
+const blankSite = () => ({ state: 'wait', items: [], total: null, label: '', page: 0, done: false, loading: false });
+
+/** 只建壳不发请求：刷新或直接打开 #s= 时用它，省掉五站各一次配额（ADR-0008 §9）。 */
+function blankRun(kw) {
+  return { kw, idle: true, sites: new Map(SEARCH_SITES.map((s) => [s, blankSite()])) };
+}
+
+function showSearch(kw, force) {
+  $('#list-view').hidden = true;
+  $('#detail-view').hidden = true;
+  $('#search-view').hidden = false;
+  if ($('#kw').value !== kw) $('#kw').value = kw;
+  const hit = !force && searchCache.get(kw);
+  if (hit) {
+    currentSearch = hit;
+    shown = {};
+    renderSearch();
+    return;
+  }
+  if (!force) {
+    currentSearch = blankRun(kw);
+    shown = {};
+    renderSearch();
+    return;
+  }
+  startSearch(kw);
+}
+
+function startSearch(kw) {
+  const r = blankRun(kw);
+  r.idle = false;
+  currentSearch = r;
+  shown = {};
+  chipShown.clear();
+  itemByUrl.clear();
+  searchCache.delete(kw);
+  searchCache.set(kw, r);
+  while (searchCache.size > CACHE_MAX) searchCache.delete(searchCache.keys().next().value);
+  renderSearch();
+  window.scrollTo(0, 0);
+  for (const site of SEARCH_SITES) askSite(r, site);
+}
+
+async function askSite(r, site) {
+  const st = r.sites.get(site);
+  st.state = 'run';
+  st.error = '';
+  if (currentSearch === r) renderSearch();
+  try {
+    const resp = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ site, keyword: r.kw }),
+    });
+    const j = await resp.json();
+    if (!resp.ok || j.error) throw new Error(j.error || `HTTP ${resp.status}`);
+    const items = j.items || [];
+    Object.assign(st, {
+      state: 'ok',
+      items,
+      total: j.total,
+      label: j.defaultLabel || '',
+      page: 1,
+      done: items.length < PAGE_SIZE || (j.total != null && items.length >= j.total),
+    });
+  } catch (e) {
+    Object.assign(st, { state: 'bad', error: String(e.message || e).slice(0, 120) });
+  }
+  if (currentSearch === r) renderSearch();
+}
+
+/** 再要一页：只在本地余量吃完、且没到第 MAX_PAGE 页时才会被点到。 */
+async function loadPage(r, site) {
+  const st = r.sites.get(site);
+  if (!st || st.loading || st.done) return;
+  st.loading = true;
+  st.error = '';
+  renderSearch();
+  try {
+    const resp = await fetch('/api/search', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ site, keyword: r.kw, page: st.page + 1 }),
+    });
+    const j = await resp.json();
+    if (!resp.ok || j.error) throw new Error(j.error || `HTTP ${resp.status}`);
+    const items = j.items || [];
+    st.items = st.items.concat(items);
+    st.page += 1;
+    st.done = items.length < PAGE_SIZE || st.page >= MAX_PAGE || (j.total != null && st.items.length >= j.total);
+  } catch (e) {
+    st.error = String(e.message || e).slice(0, 120);
+  } finally {
+    st.loading = false;
+    if (currentSearch === r) renderSearch();
+  }
+}
+
+function renderSearch() {
+  if (!currentSearch) return;
+  if (currentSearch.idle) {
+    $('#search-view').innerHTML = `<div class="layout search-layout"><div class="content">
+      <div class="s-head"><h2>「${esc(currentSearch.kw)}」的搜索结果</h2>
+        <button type="button" class="btn-ghost" id="s-again">重新搜索</button></div>
+      <div class="s-meta">还没搜。刷新不会自动重搜 —— 一次搜索是五站各发一个请求，都吃配额。</div>
+    </div></div>`;
+    return;
+  }
+  const vals = [...currentSearch.sites.values()];
+  const done = vals.filter((v) => v.state === 'ok').length;
+  const failed = vals.filter((v) => v.state === 'bad').length;
+  const got = vals.reduce((n, v) => n + (v.state === 'ok' ? v.items.length : 0), 0);
+  const tabs = [`<button type="button" class="chip schip${tab ? '' : ' on'}" data-stab="">全部</button>`]
+    .concat(SEARCH_SITES.map((site) => siteChip(site, currentSearch.sites.get(site))))
+    .join('');
+  const secs = SEARCH_SITES.filter((s) => !tab || s === tab).map((s) => siteSection(s, currentSearch.sites.get(s))).join('');
+  const meta = failed
+    ? `${done}/5 完成 · 已取 ${got} 条 · ${failed} 站失败（可单站重试）`
+    : done === 5
+      ? `5/5 完成 · 共取到 ${got} 条`
+      : `搜索中… ${done}/5 完成`;
+  $('#search-view').innerHTML = `<div class="layout search-layout"><div class="content">
+    <div class="s-head">
+      <h2>「${esc(currentSearch.kw)}」的搜索结果</h2>
+      <button type="button" class="btn-ghost" id="s-again">重新搜索</button>
+    </div>
+    <div class="s-meta">${esc(meta)}</div>
+    <div class="pills" id="s-tabs">${tabs}</div>
+    <div class="s-body">${secs}</div>
+  </div></div>`;
+  // 数字滚动：只有新完成的那一站会动，其他站渲染时就带着终值
+  for (const el of document.querySelectorAll('#s-tabs [data-snum]')) {
+    const site = el.dataset.ssite;
+    const to = Number(el.dataset.snum);
+    if (chipShown.get(site) !== to) {
+      chipShown.set(site, to);
+      countUp(el, to);
+    }
+  }
+}
+
+function countUp(el, to) {
+  if (!to) {
+    el.textContent = '0';
+    return;
+  }
+  const t0 = performance.now();
+  const step = (t) => {
+    const k = Math.min(1, (t - t0) / 420);
+    el.textContent = String(Math.round(to * (1 - (1 - k) ** 3)));
+    if (k < 1 && el.isConnected) requestAnimationFrame(step);
+  };
+  requestAnimationFrame(step);
+}
+
+/** 一行胶囊同时是进度和站点筛选：等待转圈 → 搜索中 → 完成显示条数（滚动）/ 失败给感叹号。 */
+function siteChip(site, st) {
+  const s = siteInfo(site);
+  const cls = st.state === 'bad' ? ' bad' : st.state === 'ok' ? ' ok' : ' wait';
+  const num =
+    st.state === 'ok'
+      ? `<em class="sn" data-snum="${st.items.length}" data-ssite="${esc(site)}">${st.items.length}</em>`
+      : st.state === 'bad'
+        ? '<em class="sn">!</em>'
+        : '<em class="sn"><span class="spin"></span></em>';
+  return `<button type="button" class="chip schip${cls}${tab === site ? ' on' : ''}" data-stab="${esc(site)}" style="--c:${s.color}"><i class="sdot"></i>${esc(s.label)}${num}</button>`;
+}
+
+function siteSection(site, st) {
+  const s = siteInfo(site);
+  const n = shown[site] ?? SHOWN;
+  const body =
+    st.state === 'wait' || st.state === 'run'
+      ? `<div class="s-skel">${'<span></span>'.repeat(4)}</div>`
+      : st.state === 'bad'
+        ? `<div class="s-fail">这一站没搜成：${esc(st.error || '')} <button type="button" class="btn-ghost" data-sretry="${esc(site)}">重试这一站</button></div>`
+        : st.items.length
+          ? `<div class="grid">${st.items.slice(0, n).map(searchCard).join('')}</div>`
+          : '<div class="s-fail">这一站没有结果</div>';
+  const more =
+    st.state !== 'ok'
+      ? ''
+      : st.items.length > n
+        ? `<button type="button" class="more" data-smore="${esc(site)}">显示更多（还有 ${st.items.length - n} 个）</button>`
+        : st.loading
+          ? '<button type="button" class="more" disabled>加载中…</button>'
+          : !st.done
+            ? `<button type="button" class="more" data-spage="${esc(site)}">加载下一页（会请求一次）</button>`
+            : n > SHOWN
+              ? `<button type="button" class="more" data-sless="${esc(site)}">收起</button>`
+              : '';
+  const pageErr = st.error && st.items.length ? `<div class="s-fail">下一页没取到：${esc(st.error)}</div>` : '';
+  const note = st.state === 'ok' ? `${st.items.length} 条` : st.state === 'bad' ? '失败' : '搜索中…';
+  return `<section class="site-block" style="--c:${s.color}">
+    <header class="sb-head"><i class="sdot"></i><h3>${esc(s.label)}</h3>
+      <span class="sb-note">${esc(note)}</span>
+      ${st.label ? `<span class="sb-sort">${esc(st.label)}</span>` : ''}</header>
+    ${body}${pageErr}${more}
+  </section>`;
+}
+
+function searchCard(it) {
+  const s = siteInfo(it.site);
+  const dir = `${it.site}-${it.id}`;
+  // 标题/作者/链接全是外部站点给的：只放行 http(s)，挡 javascript:
+  const cover = /^https?:\/\//i.test(it.cover || '') ? it.cover : '';
+  const link = /^https?:\/\//i.test(it.url || '') ? it.url : '';
+  itemByUrl.set(it.url, it);
+  const href = it.inLibrary ? `#m=${encodeURIComponent(dir)}` : link;
+  const target = href && !it.inLibrary ? ' target="_blank" rel="noreferrer"' : '';
+  return `<div class="cardwrap" data-url="${esc(it.url)}">
+    <a class="card"${href ? ` href="${esc(href)}"` : ''}${target} title="${esc(it.title)}">
+      <div class="cover">${cover ? `<img src="${esc(cover)}" alt="" loading="lazy" referrerpolicy="no-referrer" onerror="this.remove()">` : ''}
+        <span class="site" style="--c:${s.color}"><i></i>${esc(s.label)}</span></div>
+      <div class="body">
+        <div class="title">${esc(it.title)}</div>
+        <div class="meta"><span class="ava" style="--a:${avaHue(it.author)}">${esc(String(it.author || '?').slice(0, 1))}</span>
+          <span class="aname">${esc(it.author || '未知作者')}</span>
+          ${it.downloads ? `<span class="stat">${ICON.download}${fmtN(it.downloads)}</span>` : ''}
+        </div>
+      </div>
+    </a>
+    <span class="cstat">${badgeHtml(it)}</span>
+  </div>`;
+}
+
+/** 卡片右上角那个标：已入库 / 在队列里（按 /api/overview 回流）/ 加个入库按钮。 */
+function badgeHtml(it) {
+  const ph = taskPhase(it.url);
+  if (it.inLibrary || ph === 'done' || ph === 'duplicate') return '<span class="libbadge">已入库</span>';
+  if (ph) return `<span class="libbadge busy">${esc(PHASE_TEXT[ph] || ph)}</span>`;
+  return `<button type="button" class="addlib" data-addlib="${esc(it.url)}">+ 入库</button>`;
+}
+
+function refreshBadges() {
+  for (const el of document.querySelectorAll('#search-view .cardwrap[data-url]')) {
+    const it = itemByUrl.get(el.dataset.url);
+    const box = el.querySelector('.cstat');
+    if (it && box) box.innerHTML = badgeHtml(it);
+  }
+}
+
+async function addFromSearch(url, btn) {
+  btn.disabled = true;
+  btn.textContent = '提交中…';
+  const r = await grab(url);
+  if (r.ok) {
+    btn.textContent = '排队中';
+    btn.classList.add('queued');
+  } else {
+    btn.disabled = false;
+    btn.textContent = '+ 入库';
+    setStatus(r.error, false, url);
+  }
+}
+
+$('#search-view').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-stab]');
+  if (t) {
+    tab = t.dataset.stab;
+    renderSearch();
+    return;
+  }
+  if (e.target.closest('#s-again')) {
+    startSearch(currentSearch.kw);
+    return;
+  }
+  const retry = e.target.closest('[data-sretry]');
+  if (retry) {
+    askSite(currentSearch, retry.dataset.sretry);
+    return;
+  }
+  const more = e.target.closest('[data-smore]');
+  if (more) {
+    shown[more.dataset.smore] = (shown[more.dataset.smore] ?? SHOWN) + SHOWN;
+    renderSearch();
+    return;
+  }
+  const page = e.target.closest('[data-spage]');
+  if (page) {
+    loadPage(currentSearch, page.dataset.spage);
+    return;
+  }
+  const less = e.target.closest('[data-sless]');
+  if (less) {
+    shown[less.dataset.sless] = SHOWN;
+    renderSearch();
+    return;
+  }
+  const add = e.target.closest('[data-addlib]');
+  if (add) addFromSearch(add.dataset.addlib, add);
+});
+
+// ── 悬浮操作栏：四个排队数字，10 秒一次（ADR-0008 §10） ─────────
+const DOCK_NUMS = [
+  { k: 'subscribe', label: '订阅', to: '/console#subs', tip: '订阅任务（在跑 + 排队）' },
+  { k: 'candidates', label: '候选', to: '/console#subs', tip: '候选台账里已判定进队的条数' },
+  { k: 'queued', label: '抓取', to: '/console#tasks', tip: '排队中的抓取任务' },
+  { k: 'downloading', label: '下载', to: '/console#tasks', tip: '正在下载的模型' },
+];
+let overview = { counts: {}, active: [], recent: [] };
+
+const taskPhase = (url) =>
+  overview.active.find((t) => t.url === url)?.phase || overview.recent.find((t) => t.url === url)?.phase || '';
+
+async function pollOverview() {
+  if (document.hidden) return;
+  try {
+    const r = await fetch('/api/overview');
+    overview = await r.json();
+  } catch {
+    return;
+  }
+  renderDock();
+  refreshBadges();
+}
+
+function renderDock() {
+  const c = overview.counts || {};
+  $('#dock-nums').innerHTML = DOCK_NUMS.map((d) => {
+    const n = c[d.k] || 0;
+    return `<a class="dock-num${n ? ' on' : ''}" href="${d.to}" title="${esc(d.tip)}：${n}"><b>${n}</b><span>${esc(d.label)}</span></a>`;
+  }).join('');
+}
+
+/** 站点名单与文案都从站点包来：加一个站不用再改前端（原来的「四站一库」就是硬编码漂掉的）。 */
+let siteLabels = [];
+async function wireSiteLabels() {
+  try {
+    siteLabels = await (await fetch('/api/sites')).json();
+  } catch {
+    siteLabels = [];
+  }
+  const names = siteLabels.map((s) => s.label).join(' / ');
+  if (!names) return;
+  const searchable = siteLabels.filter((s) => s.searchable).map((s) => s.site);
+  if (searchable.length) SEARCH_SITES = searchable; // 加站点只加包，这里跟着变
+  $('#kw').placeholder = `搜关键字（${SEARCH_SITES.length} 站一起搜），或粘贴模型页网址`;
+  $('#add-hint').textContent = `支持 ${names}。粘贴模型页网址，回车收进来。`;
+  renderSide();
+}
+
+async function init() {
+  await load();
+  wireSiteLabels();
+  renderDock();
+  pollOverview();
+  setInterval(pollOverview, 10_000); // 10 秒刷新四个数字；页面在后台就跳过
+}
+
+init().then(route);
 
 
 // ── 打印配置列表（创想云 3mf 版）＋悬浮窗 ──────────────────────

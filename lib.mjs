@@ -262,3 +262,9 @@ export async function inside(base, target) {
     return false;
   }
 }
+
+/** 给搜索结果标上「库里有没有」。库目录名就是 `<platform>-<id>`（server.mjs 的 fwd.of 同款），
+ *  所以只需要目录名集合，不用读 model.json——那是几百次读盘的活。纯函数，测试直接喂 Set。 */
+export function markInLibrary(items, keys) {
+  return items.map((it) => ({ ...it, inLibrary: keys.has(`${it.site}-${it.id}`) }));
+}

@@ -20,8 +20,9 @@ export const MEMBERS = {
 export const LOGIN_STATUS = ['logged-in', 'logged-out', 'unknown'];
 export const FILE_KINDS = ['model', 'profile', 'doc'];
 export const ORIGINS = ['author', 'other'];
-// 排序键的并集。每个包在自己的 searchOptions.sorts 里声明支持哪几个，
-// 顺序有意义：第一项是该站默认序。空数组 = 本站不支持排序（只能相关度）。
+// 排序键的并集。每个包在自己的 searchOptions.sorts 里声明支持哪几个。
+// 顺序只决定下拉框排列，**不是**默认序的声明：默认序 = 不传 sort 参数，由站点自己给
+// （人话标签见 searchOptions.defaultLabel）。空数组 = 本站不支持排序（只能相关度）。
 export const SORTS = ['downloads', 'likes', 'collects', 'newest', 'hot', 'score', 'views', 'prints', 'trend'];
 // 筛选词表：键是语义键（公共层只认这个），值是允许的语义值。包声明子集，
 // 自己翻译成原生参数——公共层不碰 colorType / multiColor 这些名字。
@@ -61,7 +62,7 @@ export const isCheckinStatus = (s) => !!s && (s.points === undefined || isNum(s.
 
 /** searchOptions：本站支持哪些排序、页大小是否固定、搜索结果带不带标签。 */
 export const isSearchOptions = (o) =>
-  !!o && Array.isArray(o.sorts) && o.sorts.every((s) => SORTS.includes(s)) && new Set(o.sorts).size === o.sorts.length && typeof o.tags === 'boolean' && (o.pageSize === undefined || (Number.isInteger(o.pageSize) && o.pageSize > 0));
+  !!o && Array.isArray(o.sorts) && o.sorts.every((s) => SORTS.includes(s)) && new Set(o.sorts).size === o.sorts.length && typeof o.tags === 'boolean' && (o.pageSize === undefined || (Number.isInteger(o.pageSize) && o.pageSize > 0)) && (o.defaultLabel === undefined || (typeof o.defaultLabel === 'string' && o.defaultLabel.trim() !== ''));
 
 /** filters：本站支持哪些筛选。键在词表里，值是该键的子集且非空、不重复。 */
 export const isFilters = (o) =>

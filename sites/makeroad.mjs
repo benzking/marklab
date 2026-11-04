@@ -15,7 +15,6 @@ const API = `${SITE}/api`;
 // 浏览器 UI 实测（2026-11-03）：喜欢=num_like（页面默认）· 下载量=num_download · 最新=publish_time。
 // 其它值（num_collect/num_view/create_time）站点不报错，但会静默回落成「不带 sort」的默认序。
 const SORT = { likes: 'num_like', downloads: 'num_download', newest: 'publish_time' };
-const DEFAULT_SORT = 'likes';
 // 说明文档：API 只肯给一个 zip（type=4，要登录），而那个 zip 在 OSS 上是固定名字、匿名可下。
 // 真没文档时 OSS 直接 404——所以「有没有文档」不用登录也能问。
 const OSS = 'https://makeroad.oss-accelerate.aliyuncs.com/output';
@@ -220,14 +219,15 @@ function totalOf(d) {
   return Number.isFinite(n) ? n : null;
 }
 
-export async function search({ keyword, page = 1, pageSize = 20, sort = DEFAULT_SORT } = {}) {
+// sort 不给就不传：站方默认序与三个排序键都不同，公共层猜不出来（ADR-0008 §3）
+export async function search({ keyword, page = 1, pageSize = 20, sort } = {}) {
   const q = new URLSearchParams({
     keyword: String(keyword || ''),
     page: String(page),
     rownum: String(pageSize),
     type: '1',
-    sort: SORT[sort] || SORT[DEFAULT_SORT],
   });
+  if (SORT[sort]) q.set('sort', SORT[sort]);
   const d = await api(`/search?${q}`);
   if (!Array.isArray(d?.list)) throw new Error('MakeRoad 搜索返回里没有 data.list');
   return { total: totalOf(d), items: d.list.map(normalize) };
@@ -260,7 +260,7 @@ const pack = {
   loginState,
   meta,
   fileLinks,
-  searchOptions: { sorts: ['likes', 'downloads', 'newest'], tags: false },
+  searchOptions: { sorts: ['likes', 'downloads', 'newest'], tags: false, defaultLabel: '综合' },
   search,
   userModels,
   checkinStatus,
